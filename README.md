@@ -140,6 +140,14 @@ The public API contains no delivery route. The internal delivery client fails cl
 
 Retries are bounded, and every outbox item's idempotency key is derived from its own monotonic per-(account, provider) sequence, so a payload that reverts to an earlier state still gets a fresh key instead of colliding with the item that already staged that state. Retries honor integer `Retry-After` values. The committed test uses an obviously fake token with an in-memory HTTP transport; it does not contact HubSpot or Salesforce.
 
+## Real HubSpot evidence
+
+`scripts/hubspot_live_sync.py` runs the exact reconciliation output above against a real, free HubSpot developer test portal (no card, no production access) — separate from the FastAPI service's delivery boundary above, since the app's own outbox items carry fixture-relative operation/target-id fields that only make sense once a prior sync has actually run against a *specific* portal. The script instead re-derives create-vs-update from the portal's own live state by searching for each account's `gtm_canonical_id`, the same stamp the app writes into every payload.
+
+Run 2026-08-27, committed in [`evidence/hubspot_live_sync_2026-08-27.json`](evidence/hubspot_live_sync_2026-08-27.json): 3 custom properties created via the Properties API, 3 companies created with real portal-assigned object IDs, then the whole script re-run twice more — both reruns `PATCH`ed the identical object IDs, proving idempotency rather than asserting it.
+
+**A real correctness gap surfaced by this live run, not by inspection:** HubSpot's native `industry` company property is a closed ~140-token enumeration, not free text. The canonical `industry` value ("Software", "Manufacturing", "Analytics") 400'd the entire company create the first time it hit a real portal. Fixed with a small, explicit, exact-match-only mapping (`"software"` → `COMPUTER_SOFTWARE`); anything without an unambiguous match is dropped from the payload and the drop is recorded in the receipt rather than guessed — 2 of the 3 synced companies (Globex's "Manufacturing", Northstar's "Analytics") hit this and are visibly missing `industry` in the committed evidence. Guessing a specific token for either would be fabricating a fact this repo has no basis for.
+
 ## Verification
 
 ```bash
@@ -159,7 +167,8 @@ The local suite passed 27/27 tests (26 in CI, where the optional real-Postgres s
 | CRM fixture | synthetic | deterministic identity/conflict cases | access to private CRM data |
 | offline receipt | measured on synthetic fixture | local orchestration and idempotency | a live cross-CRM sync |
 | mocked retry test | simulated provider response | retry and idempotency behavior | provider uptime or API acceptance |
-| integration previews | generated locally | request contracts and safety gates | successful HubSpot/Salesforce writes |
+| Salesforce integration previews | generated locally | request contracts and safety gates | a successful Salesforce write |
+| HubSpot live sync (`evidence/hubspot_live_sync_2026-08-27.json`) | **real writes, free dev/test portal** | real object creation, update, and idempotency against HubSpot's live API | production HubSpot access, or that the synced companies are real |
 | BigQuery deployment pack | unexecuted infrastructure code | a reviewable deployment path | a live cloud warehouse |
 
 No private credentials, customer records, delivery result, campaign result, pipeline, or revenue claim is committed.

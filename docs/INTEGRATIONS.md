@@ -2,9 +2,13 @@
 
 ## HubSpot
 
-The preview maps the canonical record to a company `properties` object. Standard-like fields include `domain`, `name`, `industry`, `numberofemployees`, and `lifecyclestage`. The `gtm_*` fields are intentional custom-property placeholders and must exist in the target portal before live delivery.
+The preview maps the canonical record to a company `properties` object. Standard-like fields include `domain`, `name`, `industry`, `numberofemployees`, and `lifecyclestage`. The `gtm_*` fields are custom properties (`gtm_owner_email`, `gtm_marketing_opt_in`, `gtm_canonical_id`).
 
-The delivery boundary uses a private-app bearer token supplied at runtime. No OAuth flow, portal ID, private-app token, or successful write is included in the repository.
+**Run for real, 2026-08-27** (`scripts/hubspot_live_sync.py`, evidence in `evidence/hubspot_live_sync_2026-08-27.json`): all three `gtm_*` properties created via the Properties API in a free HubSpot developer test portal, and all three fixture accounts synced with real, portal-assigned object IDs. This is a dev/test portal, not production access, and the synced companies are the same declared-synthetic fixture used throughout the repo — not real customers.
+
+`industry` cannot be passed through as-is: HubSpot's native company `industry` property is a closed enumeration (~140 fixed tokens), and the canonical field is free text chosen from source-CRM values. The live sync script maps only exact, unambiguous matches (`"software"` → `COMPUTER_SOFTWARE`) and drops anything else from the payload rather than guessing a token the repo has no basis for asserting — visible in the evidence file as `industry_dropped_no_hubspot_enum_match`.
+
+The delivery boundary in the FastAPI service itself is separate from the live-sync script above: `GuardedDeliveryClient` replays an outbox item's fixture-relative `operation`/`target_external_id` (e.g. "PATCH hs-1001"), which only means something once a prior sync has already run against that specific portal. Against a freshly empty portal there is no `hs-1001` to PATCH, so the live-sync script re-derives create-vs-update from the portal's own live state instead, rather than stretching the app's delivery client to a scenario it wasn't built for. `GuardedDeliveryClient` itself has still never been exercised against a real endpoint, and no OAuth flow, portal ID, or token is included in the repository.
 
 ## Salesforce
 
@@ -32,4 +36,4 @@ Every outbox payload carries this control plane's own canonical id (`gtm_canonic
 
 `.env.example` contains empty placeholders only. Live delivery requires a global switch, provider switch, and provider credentials. The FastAPI router does not expose the delivery method.
 
-This is a safe public integration boundary, not proof that Aditya has access to a private HubSpot portal or Salesforce production org.
+This is a safe public integration boundary. `scripts/hubspot_live_sync.py`'s committed evidence proves access to a free HubSpot developer test portal, deliberately not production — it is not proof of access to any production HubSpot or Salesforce org.

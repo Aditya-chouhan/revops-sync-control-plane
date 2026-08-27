@@ -36,7 +36,7 @@ The second named risk — "overwrite consent" — had its own version of the sam
 
 ## What I would add with an authorized environment
 
-1. deploy the documented custom properties/fields in sandbox portals;
+1. ~~deploy the documented custom properties/fields in sandbox portals~~ — **done for HubSpot, 2026-08-27**: `scripts/hubspot_live_sync.py` created all three `gtm_*` properties and synced the fixture accounts against a real free dev/test portal, with committed real object IDs and a proven-by-rerun idempotency check (`evidence/hubspot_live_sync_2026-08-27.json`). It also surfaced a real gap the fixture never would have: HubSpot's `industry` property is a closed enumeration, not free text — see `docs/INTEGRATIONS.md`. Salesforce fields are deployed and verified separately in `salesforce-gtm-org`; still open here is doing the equivalent live sync against that Salesforce org instead of only generating previews for it;
 2. validate provider-native webhook signatures;
 3. add queue-backed outbox workers and dead-letter replay;
 4. run shadow comparison against an existing integration before enabling writes;

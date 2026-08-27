@@ -1,0 +1,147 @@
+{
+  "data_classification": "real_hubspot_dev_portal_sync",
+  "run_at": "2026-08-27T16:42:23Z",
+  "portal": "HubSpot developer test account (free, no card)",
+  "reconciliation": {
+    "run_id": "4fd8bc40-45b0-48b4-ac26-63f49ed7915c",
+    "source_mode": "fixture",
+    "data_classification": "synthetic",
+    "input_records": 6,
+    "inserted_records": 6,
+    "updated_records": 0,
+    "unchanged_records": 0,
+    "accounts_reconciled": 4,
+    "conflicts_recorded": 8,
+    "outbox_previews_created": 6,
+    "external_writes": 0
+  },
+  "property_setup": [
+    {
+      "property": "gtm_owner_email",
+      "action": "already_existed",
+      "status_code": 200
+    },
+    {
+      "property": "gtm_marketing_opt_in",
+      "action": "already_existed",
+      "status_code": 200
+    },
+    {
+      "property": "gtm_canonical_id",
+      "action": "already_existed",
+      "status_code": 200
+    }
+  ],
+  "companies_synced": [
+    {
+      "canonical_account_id": "2b34bd8a-3edc-5215-906a-8e0b0410db50",
+      "domain": "acme-labs.example",
+      "resolution_basis": "exact_normalized_domain",
+      "operation": "PATCH",
+      "hubspot_object_id": "342349956807",
+      "status_code": 200,
+      "properties_sent": {
+        "domain": "acme-labs.example",
+        "name": "Acme Labs, Inc.",
+        "industry": "COMPUTER_SOFTWARE",
+        "numberofemployees": 135,
+        "gtm_owner_email": "account-executive@example.invalid",
+        "lifecyclestage": "marketingqualifiedlead",
+        "gtm_marketing_opt_in": false,
+        "gtm_canonical_id": "2b34bd8a-3edc-5215-906a-8e0b0410db50"
+      },
+      "industry_dropped_no_hubspot_enum_match": null,
+      "hubspot_response_properties": {
+        "createdate": "2026-08-27T16:39:55.562Z",
+        "domain": "acme-labs.example",
+        "gtm_canonical_id": "2b34bd8a-3edc-5215-906a-8e0b0410db50",
+        "gtm_marketing_opt_in": "false",
+        "gtm_owner_email": "account-executive@example.invalid",
+        "hs_lastmodifieddate": "2026-08-27T16:40:11.509Z",
+        "hs_object_id": "342349956807",
+        "hs_object_source": "INTEGRATION",
+        "hs_object_source_id": "50812996",
+        "hs_object_source_label": "INTEGRATION",
+        "hs_pipeline": "companies-lifecycle-pipeline",
+        "hs_task_label": "Acme Labs, Inc.",
+        "hs_v2_date_entered_current_stage": "2026-08-27T16:39:55.562Z",
+        "hs_v2_time_in_current_stage": "2026-08-27T16:39:55.562Z",
+        "industry": "COMPUTER_SOFTWARE",
+        "lifecyclestage": "marketingqualifiedlead",
+        "name": "Acme Labs, Inc.",
+        "numberofemployees": "135"
+      }
+    },
+    {
+      "canonical_account_id": "a264e9dd-51d9-5cab-b2ab-68102373cbb7",
+      "domain": "globex-systems.example",
+      "resolution_basis": "exact_normalized_domain",
+      "operation": "PATCH",
+      "hubspot_object_id": "342426307278",
+      "status_code": 200,
+      "properties_sent": {
+        "domain": "globex-systems.example",
+        "name": "Globex Systems",
+        "numberofemployees": 500,
+        "gtm_owner_email": "enterprise-ae@example.invalid",
+        "lifecyclestage": "marketingqualifiedlead",
+        "gtm_marketing_opt_in": false,
+        "gtm_canonical_id": "a264e9dd-51d9-5cab-b2ab-68102373cbb7"
+      },
+      "industry_dropped_no_hubspot_enum_match": "Manufacturing",
+      "hubspot_response_properties": {
+        "createdate": "2026-08-27T16:39:57.342Z",
+        "domain": "globex-systems.example",
+        "gtm_canonical_id": "a264e9dd-51d9-5cab-b2ab-68102373cbb7",
+        "gtm_marketing_opt_in": "false",
+        "gtm_owner_email": "enterprise-ae@example.invalid",
+        "hs_lastmodifieddate": "2026-08-27T16:40:11.226Z",
+        "hs_object_id": "342426307278",
+        "hs_object_source": "INTEGRATION",
+        "hs_object_source_id": "50812996",
+        "hs_object_source_label": "INTEGRATION",
+        "hs_pipeline": "companies-lifecycle-pipeline",
+        "hs_task_label": "Globex Systems",
+        "hs_v2_date_entered_current_stage": "2026-08-27T16:39:57.342Z",
+        "hs_v2_time_in_current_stage": "2026-08-27T16:39:57.342Z",
+        "lifecyclestage": "marketingqualifiedlead",
+        "name": "Globex Systems",
+        "numberofemployees": "500"
+      }
+    },
+    {
+      "canonical_account_id": "5466957a-ff0b-5bc8-afa5-d8cb1f34c7e9",
+      "domain": null,
+      "resolution_basis": "provider_record_no_domain",
+      "operation": "PATCH",
+      "hubspot_object_id": "342407098101",
+      "status_code": 200,
+      "properties_sent": {
+        "name": "Northstar Labs",
+        "numberofemployees": 40,
+        "lifecyclestage": "lead",
+        "gtm_marketing_opt_in": true,
+        "gtm_canonical_id": "5466957a-ff0b-5bc8-afa5-d8cb1f34c7e9"
+      },
+      "industry_dropped_no_hubspot_enum_match": "Analytics",
+      "hubspot_response_properties": {
+        "createdate": "2026-08-27T16:39:59.357Z",
+        "gtm_canonical_id": "5466957a-ff0b-5bc8-afa5-d8cb1f34c7e9",
+        "gtm_marketing_opt_in": "true",
+        "hs_lastmodifieddate": "2026-08-27T16:40:11.101Z",
+        "hs_object_id": "342407098101",
+        "hs_object_source": "INTEGRATION",
+        "hs_object_source_id": "50812996",
+        "hs_object_source_label": "INTEGRATION",
+        "hs_pipeline": "companies-lifecycle-pipeline",
+        "hs_task_label": "Northstar Labs",
+        "hs_v2_date_entered_current_stage": "2026-08-27T16:39:59.357Z",
+        "hs_v2_time_in_current_stage": "2026-08-27T16:39:59.357Z",
+        "lifecyclestage": "lead",
+        "name": "Northstar Labs",
+        "numberofemployees": "40"
+      }
+    }
+  ],
+  "claim_boundary": "Every object id and response body below is real, returned by HubSpot's live API against a free developer test portal. The source data is the same synthetic, declared-fictional CRM fixture used throughout this repo -- these are not real companies, and no production HubSpot portal was touched."
+}
