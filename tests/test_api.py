@@ -26,7 +26,12 @@ def test_api_reconcile_read_and_preview(settings: Settings) -> None:
         assert preview.status_code == 200
         assert preview.json()["would_write"] is False
         assert preview.json()["credential_present"] is False
-        assert len(client.get("/v1/outbox").json()) == 8
+        # Not 8: the two no-domain isolated accounts don't stage a phantom
+        # cross-provider create (S1 — see tests/test_reconcile.py).
+        outbox = client.get("/v1/outbox").json()
+        assert len(outbox) == 6
+        assert {item["sequence"] for item in outbox} == {1}
+        assert all(item["payload_checksum"] for item in outbox)
         assert client.get("/metrics").status_code == 200
 
 

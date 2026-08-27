@@ -5,10 +5,11 @@
 The design is centered on five invariants:
 
 1. One provider/external ID maps to one source row.
-2. Only an exact normalized domain can automatically join records across providers.
-3. The canonical field value is explainable by a named ownership policy.
-4. A logically identical intended write has one idempotency key.
-5. Previewing and delivering are different operations; the public service exposes only previewing.
+2. Only an exact normalized domain — one that isn't a known mail provider or website-builder host — can automatically join records across providers.
+3. The canonical field value is explainable by a named ownership policy, except marketing consent, which is explainable by a fail-safe override that ignores ownership on disagreement.
+4. An account with no stable cross-provider identity anchor never has a create staged into a provider it has no record in, so a delivered write can't echo back into an unbounded chain of duplicate creates (see `docs/CASE_STUDY.md`, "Failure mode demonstrated").
+5. Each intended write has a fresh idempotency key per state *transition*, not per state — reverting to a payload staged two writes ago produces a new key, not a collision with the older one.
+6. Previewing and delivering are different operations; the public service exposes only previewing.
 
 ## Transaction boundary
 
@@ -41,4 +42,4 @@ Exact-domain matching favors precision over recall. It will miss parent/subsidia
 
 ## Scale path
 
-The current service is synchronous for reviewer clarity. Higher volume would introduce webhook ingress, a durable queue, `SELECT ... FOR UPDATE SKIP LOCKED` outbox workers, provider-specific distributed rate limits, dead-letter replay, encrypted tenant secrets, and row-level tenant isolation. Those are identified extensions—not claims about the current repository.
+The current service is synchronous for reviewer clarity, and single-writer: two concurrent reconciliation requests that both derive the same new canonical account id will both find it absent and both attempt to insert it, and the loser gets a database `IntegrityError` rather than a handled conflict. There is no advisory lock or `INSERT ... ON CONFLICT DO NOTHING` upsert covering that race. Higher volume would introduce webhook ingress, a durable queue, that concurrency-safe upsert, `SELECT ... FOR UPDATE SKIP LOCKED` outbox workers, provider-specific distributed rate limits, dead-letter replay, encrypted tenant secrets, and row-level tenant isolation. Those are identified extensions—not claims about the current repository.

@@ -32,3 +32,46 @@ def test_exact_domain_matches_but_missing_domain_does_not() -> None:
     sf_missing = make_record("salesforce", "sf-2", None)
     assert canonical_identity(hs_missing)[0] != canonical_identity(sf_missing)[0]
     assert canonical_identity(hs_missing)[1] == "provider_record_no_domain"
+
+
+def test_generic_domains_are_isolated_not_merged() -> None:
+    hubspot = make_record("hubspot", "hs-9", "gmail.com")
+    salesforce = make_record("salesforce", "sf-9", "gmail.com")
+    hs_id, hs_basis, hs_domain = canonical_identity(hubspot)
+    sf_id, sf_basis, sf_domain = canonical_identity(salesforce)
+    assert hs_id != sf_id
+    assert hs_basis == sf_basis == "generic_domain_not_mergeable"
+    assert hs_domain is None
+    assert sf_domain is None
+
+
+def test_canonical_id_hint_rebinds_when_the_account_actually_exists() -> None:
+    hint_record = make_record("salesforce", "sf-echo", None).model_copy(
+        update={"canonical_id_hint": "existing-account-id"}
+    )
+    account_id, basis, domain = canonical_identity(
+        hint_record, account_exists=lambda candidate: candidate == "existing-account-id"
+    )
+    assert account_id == "existing-account-id"
+    assert basis == "canonical_id_echo"
+    assert domain is None
+
+
+def test_canonical_id_hint_is_ignored_when_the_account_does_not_exist() -> None:
+    hint_record = make_record("salesforce", "sf-echo", None).model_copy(
+        update={"canonical_id_hint": "ghost-account-id"}
+    )
+    account_id, basis, _ = canonical_identity(hint_record, account_exists=lambda candidate: False)
+    assert basis == "provider_record_no_domain"
+    assert account_id != "ghost-account-id"
+
+
+def test_canonical_id_hint_is_ignored_without_an_exists_check() -> None:
+    # No account_exists callable supplied — a caller cannot forget the check
+    # and accidentally trust an unverified hint.
+    hint_record = make_record("salesforce", "sf-echo", None).model_copy(
+        update={"canonical_id_hint": "some-account-id"}
+    )
+    account_id, basis, _ = canonical_identity(hint_record)
+    assert basis == "provider_record_no_domain"
+    assert account_id != "some-account-id"

@@ -19,6 +19,14 @@ class SourceAccount(BaseModel):
     lifecycle_stage: str | None = None
     marketing_opt_in: bool | None = None
     source_updated_at: datetime
+    canonical_id_hint: str | None = Field(
+        default=None,
+        description=(
+            "Read from gtm_canonical_id / GTM_Canonical_ID__c when a source system "
+            "echoes back a record this control plane previously staged. Used to "
+            "re-bind identity instead of isolating a new canonical account."
+        ),
+    )
 
 
 class ReconcileRequest(BaseModel):
@@ -77,6 +85,8 @@ class OutboxRead(BaseModel):
     target_provider: str
     target_external_id: str | None
     operation: str
+    sequence: int
+    payload_checksum: str
     idempotency_key: str
     payload: dict[str, Any]
     status: str

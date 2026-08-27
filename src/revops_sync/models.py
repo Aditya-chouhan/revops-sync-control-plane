@@ -85,6 +85,13 @@ class OutboxItem(Base):
     target_provider: Mapped[str] = mapped_column(String(24), index=True)
     target_external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     operation: Mapped[str] = mapped_column(String(24))
+    # Monotonic per (account, provider) — the identity half of idempotency.
+    # `payload_checksum` is a dedup hint compared only against the immediately
+    # preceding item for this pair, so a value that reverts to something staged
+    # two items ago still gets a fresh sequence instead of being silently
+    # dropped (see: `_create_outbox_previews`).
+    sequence: Mapped[int] = mapped_column(Integer)
+    payload_checksum: Mapped[str] = mapped_column(String(64))
     idempotency_key: Mapped[str] = mapped_column(String(64), unique=True)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(40), default="preview_only", index=True)
@@ -93,6 +100,16 @@ class OutboxItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     account: Mapped[CanonicalAccount] = relationship(back_populates="outbox_items")
+
+    __table_args__ = (
+        Index(
+            "uq_outbox_account_provider_sequence",
+            "canonical_account_id",
+            "target_provider",
+            "sequence",
+            unique=True,
+        ),
+    )
 
 
 class SyncRun(Base):

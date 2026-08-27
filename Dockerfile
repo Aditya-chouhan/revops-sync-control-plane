@@ -23,5 +23,9 @@ COPY alembic ./alembic
 COPY data ./data
 
 USER app
+# EXPOSE documents the default only. Cloud Run, Render, Railway, and HF
+# Spaces all inject $PORT and route to it at runtime, so the CMD below must
+# honor it rather than hardcode 8000 — a hardcoded port silently drops all
+# traffic on every one of those platforms.
 EXPOSE 8000
-CMD ["sh", "-c", "alembic upgrade head && uvicorn revops_sync.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn revops_sync.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

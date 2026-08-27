@@ -76,6 +76,29 @@ def _choose_value(
     return newest.payload[field_name], newest.provider, f"{policy}_fallback_latest_non_null"
 
 
+def _choose_consent(records: dict[str, SourceRecord]) -> tuple[Any, str, str]:
+    """Consent fails safe: when both systems have a value and disagree, the
+    restrictive (opt-out) value wins regardless of field-ownership policy or
+    which side is newer. This overrides the hubspot-preferred policy that
+    otherwise governs this field — a stale opt-in must never overwrite a
+    fresher opt-out, or a fresher opt-in overwrite a stale opt-out either."""
+    preferred_source, policy = FIELD_POLICIES["marketing_opt_in"]
+    values: dict[str, Any] = {}
+    for provider, record in records.items():
+        value = record.payload.get("marketing_opt_in")
+        if _present(value):
+            values[provider] = value
+    if not values:
+        return None, "none", policy
+    if len(values) > 1 and len(set(values.values())) > 1:
+        restrictive_source = next(source for source, value in values.items() if value is False)
+        return False, restrictive_source, "consent_restrictive_wins"
+    if preferred_source in values:
+        return values[preferred_source], preferred_source, policy
+    provider, value = next(iter(values.items()))
+    return value, provider, f"{policy}_fallback_latest_non_null"
+
+
 def _target_payload(provider: str, account: CanonicalAccount) -> dict[str, Any]:
     if provider == "hubspot":
         return {
@@ -117,7 +140,11 @@ class ReconciliationService:
         touched_ids: set[str] = set()
 
         for record in records:
-            account_id, basis, domain = canonical_identity(record)
+            account_id, basis, domain = canonical_identity(
+                record,
+                account_exists=lambda candidate: self.session.get(CanonicalAccount, candidate)
+                is not None,
+            )
             touched_ids.add(account_id)
             account = self.session.get(CanonicalAccount, account_id)
             if account is None:
@@ -215,7 +242,10 @@ class ReconciliationService:
         conflicts_created = 0
 
         for field_name in FIELD_POLICIES:
-            chosen, chosen_source, applied_policy = _choose_value(field_name, latest)
+            if field_name == "marketing_opt_in":
+                chosen, chosen_source, applied_policy = _choose_consent(latest)
+            else:
+                chosen, chosen_source, applied_policy = _choose_value(field_name, latest)
             setattr(account, field_name, chosen)
             hubspot_value = latest.get("hubspot")
             salesforce_value = latest.get("salesforce")
@@ -253,18 +283,49 @@ class ReconciliationService:
         for row in records.values():
             by_provider[row.provider].append(row)
         for provider in ("hubspot", "salesforce"):
+            existing_for_provider = by_provider.get(provider, [])
+            if not existing_for_provider and account.domain is None:
+                # No stable cross-provider identity anchor for this account
+                # (no domain, and no confirmed canonical_id echo yet — see
+                # `identity.canonical_identity`). Staging a POST here would
+                # create a record in a system that has never seen this
+                # account; if that write is ever delivered, the created
+                # record comes back with no domain either, gets isolated as
+                # a brand-new canonical account, and stages a POST of its
+                # own — an unbounded duplicate-creation loop. The same
+                # conservative refusal that governs merging governs writing.
+                continue
             payload = _target_payload(provider, account)
             target = max(
-                by_provider.get(provider, []),
-                key=lambda item: item.source_updated_at,
-                default=None,
+                existing_for_provider, key=lambda item: item.source_updated_at, default=None
             )
             external_id = target.external_id if target else None
             operation = "PATCH" if external_id else "POST"
-            idempotency_key = _checksum([provider, account.id, operation, payload])
-            item_id = idempotency_key
-            if self.session.get(OutboxItem, item_id) is not None:
+            payload_checksum = _checksum([provider, account.id, operation, payload])
+
+            latest_item = self.session.scalar(
+                select(OutboxItem)
+                .where(
+                    OutboxItem.canonical_account_id == account.id,
+                    OutboxItem.target_provider == provider,
+                )
+                .order_by(OutboxItem.sequence.desc())
+                .limit(1)
+            )
+            if latest_item is not None and latest_item.payload_checksum == payload_checksum:
+                # Dedup only against the immediately preceding item for this
+                # (account, provider) pair — not against payload history in
+                # general. A checksum keyed purely on payload content would
+                # let a value that reverts to an earlier state (e.g. 200 ->
+                # 135 -> 200) silently collide with an old item's id and
+                # produce no new outbox row, leaving the CRM stuck on 135.
                 continue
+
+            next_sequence = latest_item.sequence + 1 if latest_item is not None else 1
+            item_id = f"{account.id}:{provider}:{next_sequence}"
+            idempotency_key = _checksum(
+                [provider, account.id, operation, payload, next_sequence]
+            )
             self.session.add(
                 OutboxItem(
                     id=item_id,
@@ -272,6 +333,8 @@ class ReconciliationService:
                     target_provider=provider,
                     target_external_id=external_id,
                     operation=operation,
+                    sequence=next_sequence,
+                    payload_checksum=payload_checksum,
                     idempotency_key=idempotency_key,
                     payload=payload,
                     status="preview_only",

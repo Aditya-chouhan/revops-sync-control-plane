@@ -1,0 +1,37 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.14, pytest-8.4.2, pluggy-1.6.0
+rootdir: /private/tmp/claude-501/-Users-adityachouhan-Second-Brain-/08ba319d-ec82-4ead-bc34-c935a93596b4/scratchpad/revops-sync-control-plane
+configfile: pyproject.toml
+testpaths: tests
+plugins: cov-6.3.0, anyio-4.14.2
+collected 27 items
+
+tests/test_api.py ...                                                    [ 11%]
+tests/test_artifacts.py ...                                              [ 22%]
+tests/test_cli.py ....                                                   [ 37%]
+tests/test_gateways.py ...                                               [ 48%]
+tests/test_identity.py ......                                            [ 70%]
+tests/test_postgres_smoke.py .                                           [ 74%]
+tests/test_reconcile.py .......                                          [100%]
+
+================================ tests coverage ================================
+______________ coverage: platform darwin, python 3.12.14-final-0 _______________
+
+Name                               Stmts   Miss  Cover   Missing
+----------------------------------------------------------------
+src/revops_sync/__init__.py            1      0   100%
+src/revops_sync/api.py                76     10    87%   66-67, 82, 93-95, 110, 120, 123-124
+src/revops_sync/cli.py                30      1    97%   39
+src/revops_sync/config.py             25      0   100%
+src/revops_sync/db.py                 23      8    65%   28-36
+src/revops_sync/gateways.py           68     19    72%   18, 31-38, 85-87, 89, 96-98, 109, 116, 121-125
+src/revops_sync/identity.py           34      1    97%   51
+src/revops_sync/main.py               24      0   100%
+src/revops_sync/models.py             77      0   100%
+src/revops_sync/observability.py      29      0   100%
+src/revops_sync/reconcile.py         153      4    97%   46, 98-99, 235
+src/revops_sync/schemas.py            93      1    99%   41
+----------------------------------------------------------------
+TOTAL                                633     44    93%
+Required test coverage of 80% reached. Total coverage: 93.05%
+======================== 27 passed, 1 warning in 1.55s =========================

@@ -30,12 +30,14 @@ flowchart LR
 ## What is implemented
 
 - conservative identity resolution using normalized exact domains
-- explicit refusal to fuzzy-merge same-name records when a domain is unavailable
+- explicit refusal to fuzzy-merge same-name records when a domain is unavailable, or to merge on a generic mail/website-builder domain (`gmail.com`, `shopify.com`, ...) at all
+- refusal to stage a cross-provider create for an account with no stable identity anchor, so a delivered write can't echo back and spawn an unbounded chain of duplicate creates in both systems
+- an explicit re-identification path: a source system echoing back a record stamped with this control plane's own canonical id rebinds to the existing account instead of isolating a new one
 - deterministic canonical IDs and source-record checksums
-- field ownership with preferred-source and latest-non-null fallback policies
+- field ownership with preferred-source and latest-non-null fallback policies, with a fail-safe override on marketing consent specifically (a disagreement always resolves to the opt-out)
 - immutable conflict fingerprints, including both source values and the chosen resolution
-- transactional reconciliation in PostgreSQL or SQLite
-- idempotent HubSpot and Salesforce outbox previews
+- transactional reconciliation in PostgreSQL or SQLite — Postgres exercised by a real, evidence-committed test run, not only by schema migration
+- idempotent HubSpot and Salesforce outbox previews, keyed by a monotonic per-account-per-provider sequence so a value that reverts to an earlier state still stages a fresh preview instead of silently colliding with an old one
 - guarded delivery client with retryable 429/5xx handling and `Retry-After` support
 - FastAPI endpoints, optional API-key protection, OpenAPI, health/readiness, JSON logs, and Prometheus metrics
 - Alembic migration, Docker Compose, GitHub Actions, and an 80% coverage gate
@@ -86,10 +88,11 @@ The automatic match rule is deliberately narrow:
 
 1. remove scheme, path, port, trailing dot, and a leading `www.`;
 2. lowercase the hostname;
-3. merge only on an exact normalized domain;
-4. when no valid domain exists, isolate by `provider + external_id`.
+3. reject the domain if it's a known mail provider or website-builder host (`gmail.com`, `shopify.com`, `wixsite.com`, ...) — a shared domain like that is not a merge key;
+4. merge only on an exact normalized domain that survives step 3;
+5. when no valid domain exists, isolate by `provider + external_id` — unless the record carries this control plane's own canonical id, echoed back by a source system that already received it, in which case it rebinds to that existing account instead.
 
-Two records named “Northstar Labs” with no domain therefore remain two canonical accounts. A human-reviewed merge workflow could be added later; the demo will not manufacture certainty.
+Two records named “Northstar Labs” with no domain therefore remain two canonical accounts, and neither one stages a write into the provider it isn't in — an unbounded chain of duplicate creates is the failure mode that not-merging alone doesn't prevent (see "Failure mode demonstrated" in the [case study](docs/CASE_STUDY.md)). A human-reviewed merge workflow could be added later; the demo will not manufacture certainty.
 
 ## Field ownership
 
@@ -100,9 +103,9 @@ Two records named “Northstar Labs” with no domain therefore remain two canon
 | employee count | Salesforce | newest non-null observation |
 | account owner email | Salesforce | newest non-null observation |
 | lifecycle stage | HubSpot | newest non-null observation |
-| marketing opt-in | HubSpot | newest non-null observation |
+| marketing opt-in | HubSpot, **except**: on disagreement the restrictive (opt-out) value always wins | newest non-null observation |
 
-Every divergent non-null pair is still written to the conflict ledger even when policy resolves it automatically.
+Every divergent non-null pair is still written to the conflict ledger even when policy resolves it automatically. "Newest non-null observation" is a record-level timestamp (the source system's own last-modified field), not a per-field one — a source is "newer" if *any* of its fields changed more recently, which can misattribute freshness to a field that didn't actually change. Marketing opt-in is the one deliberate exception to ownership *and* recency: consent must fail safe, so a disagreement resolves to whichever side said no, regardless of which system owns the field or which record is newer.
 
 ## Verified synthetic run
 
@@ -110,7 +113,7 @@ The committed six-record fixture deterministically produces:
 
 - 4 canonical accounts: two exact-domain matches and two isolated no-domain records
 - 8 recorded field conflicts
-- 8 preview-only outbox actions
+- 6 preview-only outbox actions — not 8: the two isolated no-domain accounts don't stage a create into a provider that has never seen them (see "Failure mode demonstrated" in the [case study](docs/CASE_STUDY.md))
 - 0 external writes
 
 Running the same input again creates no duplicate source, conflict, or outbox rows. These counts are fixture/software verification, not commercial metrics. See the dated [offline receipt](data/synthetic/offline_reconciliation_receipt_2026-08-27.json).
@@ -135,7 +138,7 @@ The public API contains no delivery route. The internal delivery client fails cl
 3. the provider credential and endpoint are present;
 4. application code explicitly invokes delivery.
 
-Retries are bounded, use one idempotency key per intended state, and honor integer `Retry-After` values. The committed test uses an obviously fake token with an in-memory HTTP transport; it does not contact HubSpot or Salesforce.
+Retries are bounded, and every outbox item's idempotency key is derived from its own monotonic per-(account, provider) sequence, so a payload that reverts to an earlier state still gets a fresh key instead of colliding with the item that already staged that state. Retries honor integer `Retry-After` values. The committed test uses an obviously fake token with an in-memory HTTP transport; it does not contact HubSpot or Salesforce.
 
 ## Verification
 
@@ -147,7 +150,7 @@ alembic upgrade head
 alembic check
 ```
 
-The local suite completed 15/15 tests with 87% statement coverage on 2026-08-27. GitHub Actions repeats lint, types, tests, a PostgreSQL migration/drift check, dbt parsing, Terraform validation, and a Docker build on every push.
+The local suite passed 27/27 tests (26 in CI, where the optional real-Postgres smoke test is skipped by design) with 93% statement coverage on 2026-08-27 — see [`evidence/`](evidence/) for the committed `pytest`/`ruff`/`mypy` output this line is describing, and [GitHub Actions run `33085722635`](https://github.com/Aditya-chouhan/revops-sync-control-plane/actions/runs/33085722635) for the pre-fix CI run (15/15, 87.25%) that these numbers supersede. GitHub Actions repeats lint, types, tests, a PostgreSQL migration/drift check, dbt parsing, Terraform validation, and a Docker build on every push.
 
 ## Honest boundaries
 
