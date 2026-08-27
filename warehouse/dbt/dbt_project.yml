@@ -1,0 +1,13 @@
+name: revops_sync_warehouse
+version: "1.0.0"
+config-version: 2
+
+profile: revops_sync_warehouse
+model-paths: ["models"]
+
+models:
+  revops_sync_warehouse:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

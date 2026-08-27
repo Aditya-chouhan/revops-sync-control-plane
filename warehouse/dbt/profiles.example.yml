@@ -1,0 +1,10 @@
+revops_sync_warehouse:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: replace-with-authorized-gcp-project
+      dataset: analytics_revops
+      location: asia-south1
+      threads: 4

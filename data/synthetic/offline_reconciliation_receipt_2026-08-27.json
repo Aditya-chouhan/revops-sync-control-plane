@@ -1,0 +1,29 @@
+{
+  "executed_at": "2026-08-27T09:43:49Z",
+  "environment": "local Python 3.12 and SQLite",
+  "data_classification": "synthetic",
+  "fixture": "data/synthetic/crm_accounts.json",
+  "first_run": {
+    "run_id": "09f67b9d-3d14-43b3-a27b-9e4d9b92344e",
+    "input_records": 6,
+    "inserted_records": 6,
+    "updated_records": 0,
+    "unchanged_records": 0,
+    "accounts_reconciled": 4,
+    "conflicts_recorded": 8,
+    "outbox_previews_created": 8,
+    "external_writes": 0
+  },
+  "immediate_replay": {
+    "run_id": "c265f2e1-3f82-498b-9055-80df531f8034",
+    "input_records": 6,
+    "inserted_records": 0,
+    "updated_records": 0,
+    "unchanged_records": 6,
+    "accounts_reconciled": 4,
+    "conflicts_recorded": 0,
+    "outbox_previews_created": 0,
+    "external_writes": 0
+  },
+  "claim_boundary": "Measured software behavior over invented CRM records. No HubSpot, Salesforce, customer, campaign, pipeline, or revenue result is claimed."
+}

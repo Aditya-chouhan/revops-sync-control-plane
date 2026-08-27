@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: revops_sync
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d revops_sync"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/revops_sync
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check .
+      - name: Type check
+        run: mypy src
+      - name: Test
+        run: pytest --cov=src/revops_sync --cov-report=term-missing --cov-fail-under=80
+        env:
+          DATABASE_URL: sqlite://
+      - name: Migrate Postgres
+        run: alembic upgrade head
+      - name: Check migration is current
+        run: alembic check
+      - name: Parse BigQuery dbt project
+        run: |
+          python -m pip install -r warehouse/requirements.txt
+          dbt parse --project-dir warehouse/dbt --profiles-dir warehouse/dbt --no-partial-parse --warn-error
+      - uses: hashicorp/setup-terraform@v4
+      - name: Validate Terraform
+        working-directory: warehouse/terraform
+        run: |
+          terraform fmt -check
+          terraform init -backend=false
+          terraform validate
+      - name: Build container
+        run: docker build -t revops-sync-control-plane:test .

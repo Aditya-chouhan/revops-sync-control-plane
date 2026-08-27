@@ -1,0 +1,25 @@
+version: 2
+
+models:
+  - name: dim_account
+    columns:
+      - name: account_id
+        tests: [not_null, unique]
+      - name: name
+        tests: [not_null]
+  - name: fct_sync_conflict
+    columns:
+      - name: conflict_id
+        tests: [not_null, unique]
+      - name: account_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_account')
+                field: account_id
+      - name: chosen_source
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['hubspot', 'salesforce']

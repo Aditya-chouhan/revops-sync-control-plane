@@ -1,0 +1,10 @@
+version: 2
+
+sources:
+  - name: raw_revops
+    database: "{{ target.project }}"
+    schema: raw_revops
+    tables:
+      - name: canonical_accounts
+      - name: conflict_records
+      - name: sync_runs

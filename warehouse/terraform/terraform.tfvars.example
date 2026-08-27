@@ -1,0 +1,3 @@
+project_id        = "replace-with-authorized-gcp-project"
+region            = "asia-south1"
+bigquery_location = "asia-south1"
