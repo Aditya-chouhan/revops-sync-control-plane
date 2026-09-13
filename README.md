@@ -6,6 +6,16 @@ The system normalizes exact domains, creates a canonical account, applies disclo
 
 > The committed CRM fixture is entirely synthetic. This repository demonstrates software behavior—not customer data, campaign performance, pipeline, or revenue impact.
 
+## Start here: five-minute hiring walkthrough
+
+Watch ownership/consent resolution, duplicate and stale input handling, lost-response recovery, blocked newer updates, and audited create-to-update binding through the actual control-plane code. CRM responses are simulated; no live credentials or external writes are used.
+
+```bash
+python -m revops_sync.demo
+```
+
+Run after installing the project dependencies below. No Docker or CRM setup is needed. [Walkthrough and expected outcomes](docs/HIRING_DEMO.md) · [Captured execution output](docs/HIRING_DEMO_OUTPUT.md) · [Machine-readable receipt](evidence/hiring_demo_2026-09-13.json). The command checks outcomes and exits nonzero on failure; `--json` emits its receipt.
+
 ## Why this project exists
 
 Naive two-way CRM syncs create loops and overwrite good data with stale data. The difficult parts are not HTTP requests; they are identity, ownership, replay safety, auditability, and knowing when **not** to merge.
@@ -182,6 +192,8 @@ Stream-ordering verification subsequently on 2026-09-13: **83 passed, 1 skipped,
 Target-binding verification subsequently on 2026-09-13: **96 passed, 1 skipped, 93.63% line coverage**. Thirteen additional tests cover both providers' queued create/update chains, exact-object recovery after restart, conflicting/missing identities, reconciled-create binding after audited settlement release, stale-owner fencing, and migration preservation. Receipts use `target_binding` in their names. No live CRM or new PostgreSQL execution is claimed.
 
 Ingestion-ordering verification subsequently on 2026-09-13: **116 passed, 1 skipped, 93.85% line coverage**. Twenty additional tests cover duplicate snapshots, all six serial arrival orders of three versions, stale identity/consent protection, atomic conflict rollback, timezone normalization, and API receipts. Files use `ingestion_ordering` in their names. This is serial normalized ingestion—not signed provider-webhook support or concurrent-ingestion exclusion. No new migration or live CRM/PostgreSQL execution was needed. Serialize ingestion across processes before using this path in an operational deployment; the API does not enforce that coordination.
+
+Hiring-walkthrough verification subsequently on 2026-09-13: **123 passed, 1 skipped, 94.37% source-line coverage**. Seven additional tests verify safe mock-only execution, repeatability, CLI/disclosures, failure reporting and exact equality of captured walkthrough artifacts with fresh runs. See [the five-minute demo](docs/HIRING_DEMO.md). SQLite and simulated CRM only; no new live-provider, PostgreSQL, deployment or business-impact evidence is claimed.
 
 | Evidence | Classification | What it proves | What it does not prove |
 |---|---|---|---|

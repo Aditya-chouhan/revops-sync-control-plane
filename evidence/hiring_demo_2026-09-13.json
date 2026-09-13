@@ -1,0 +1,227 @@
+{
+  "all_checks_passed": true,
+  "boundaries": [
+    "All accounts, CRM IDs, CRM responses and operator attestations are synthetic.",
+    "No network transport, live CRM credentials, paid APIs or customer data are used.",
+    "This is serial SQLite execution, not PostgreSQL/concurrent-ingestion evidence.",
+    "No signed webhook receiver, external-edit conditional writes or exactly-once guarantee.",
+    "Matching read-back is not provider-settlement proof; the operator release is simulated.",
+    "No pipeline, revenue, reply-rate, seller adoption or time-saved claim is made."
+  ],
+  "data_classification": "synthetic",
+  "database": "fresh temporary file-backed SQLite; removed after run",
+  "real_external_writes": 0,
+  "sample_inputs": [
+    {
+      "canonical_id_hint": null,
+      "domain": "conflict.example",
+      "employee_count": null,
+      "external_id": "synthetic-hs-001",
+      "industry": null,
+      "lifecycle_stage": null,
+      "marketing_opt_in": true,
+      "name": "HubSpot account name",
+      "owner_email": null,
+      "provider": "hubspot",
+      "source_updated_at": "2026-09-10T12:00:00Z"
+    },
+    {
+      "canonical_id_hint": null,
+      "domain": "conflict.example",
+      "employee_count": null,
+      "external_id": "synthetic-sf-001",
+      "industry": null,
+      "lifecycle_stage": null,
+      "marketing_opt_in": false,
+      "name": "Salesforce account name",
+      "owner_email": null,
+      "provider": "salesforce",
+      "source_updated_at": "2026-09-10T12:00:00Z"
+    },
+    {
+      "canonical_id_hint": null,
+      "domain": "conflict.example",
+      "employee_count": null,
+      "external_id": "synthetic-hs-001",
+      "industry": null,
+      "lifecycle_stage": null,
+      "marketing_opt_in": true,
+      "name": "HubSpot account name",
+      "owner_email": null,
+      "provider": "hubspot",
+      "source_updated_at": "2026-09-10T12:00:00Z"
+    },
+    {
+      "canonical_id_hint": null,
+      "domain": "conflict.example",
+      "employee_count": null,
+      "external_id": "synthetic-sf-001",
+      "industry": null,
+      "lifecycle_stage": null,
+      "marketing_opt_in": false,
+      "name": "Salesforce account name",
+      "owner_email": null,
+      "provider": "salesforce",
+      "source_updated_at": "2026-09-10T12:00:00Z"
+    },
+    {
+      "canonical_id_hint": null,
+      "domain": "stale-domain.example",
+      "employee_count": null,
+      "external_id": "synthetic-sf-001",
+      "industry": null,
+      "lifecycle_stage": null,
+      "marketing_opt_in": true,
+      "name": "Stale account name",
+      "owner_email": null,
+      "provider": "salesforce",
+      "source_updated_at": "2026-09-09T12:00:00Z"
+    },
+    {
+      "canonical_id_hint": null,
+      "domain": "conflict.example",
+      "employee_count": null,
+      "external_id": "synthetic-sf-001",
+      "industry": null,
+      "lifecycle_stage": null,
+      "marketing_opt_in": false,
+      "name": "Equal-version conflicting name",
+      "owner_email": null,
+      "provider": "salesforce",
+      "source_updated_at": "2026-09-10T12:00:00Z"
+    },
+    {
+      "canonical_id_hint": null,
+      "domain": "new-account.example",
+      "employee_count": null,
+      "external_id": "synthetic-hs-new",
+      "industry": null,
+      "lifecycle_stage": null,
+      "marketing_opt_in": false,
+      "name": "New account v1",
+      "owner_email": null,
+      "provider": "hubspot",
+      "source_updated_at": "2026-09-10T12:00:00Z"
+    },
+    {
+      "canonical_id_hint": null,
+      "domain": "new-account.example",
+      "employee_count": null,
+      "external_id": "synthetic-hs-new",
+      "industry": null,
+      "lifecycle_stage": null,
+      "marketing_opt_in": false,
+      "name": "New account v2",
+      "owner_email": null,
+      "provider": "hubspot",
+      "source_updated_at": "2026-09-11T12:00:00Z"
+    }
+  ],
+  "scenarios": [
+    {
+      "business_risk": "Unclear ownership and accidental opt-in.",
+      "observed": {
+        "canonical_name": "Salesforce account name",
+        "conflicts": [
+          {
+            "chosen": false,
+            "field": "marketing_opt_in",
+            "hubspot": true,
+            "policy": "consent_restrictive_wins",
+            "salesforce": false
+          },
+          {
+            "chosen": "Salesforce account name",
+            "field": "name",
+            "hubspot": "HubSpot account name",
+            "policy": "salesforce_preferred",
+            "salesforce": "Salesforce account name"
+          }
+        ],
+        "marketing_opt_in": false,
+        "source_rows_inserted": 2
+      },
+      "passed": true,
+      "title": "1. Conflicting CRM observations"
+    },
+    {
+      "business_risk": "Duplicate actions and stale identity/consent.",
+      "observed": {
+        "additional_previews": 0,
+        "canonical_name_unchanged": "Salesforce account name",
+        "duplicates_unchanged": 2,
+        "equal_version_conflict_rejected": true,
+        "marketing_opt_in": false,
+        "stale_records_ignored": 1
+      },
+      "passed": true,
+      "title": "2. Duplicate, stale and conflicting input"
+    },
+    {
+      "business_risk": "Blind retry could create a second account.",
+      "observed": {
+        "ordering_hold": true,
+        "persisted_status": "reconciled",
+        "simulated_http": [
+          {
+            "method": "POST",
+            "path": "/services/data/v65.0/sobjects/Account"
+          },
+          {
+            "method": "GET",
+            "path": "/services/data/v65.0/query"
+          }
+        ],
+        "synthetic_external_id": "synthetic-crm-account-001",
+        "write_attempts": 1
+      },
+      "passed": true,
+      "title": "3. Accepted create, lost response, read-back recovery"
+    },
+    {
+      "business_risk": "A late older write could overwrite newer values.",
+      "observed": {
+        "additional_simulated_http": 0,
+        "newer_blocked": true,
+        "newer_write_attempts": 0,
+        "persisted_older_hold": true
+      },
+      "passed": true,
+      "title": "4. Newer update waits after restart"
+    },
+    {
+      "business_risk": "Unaudited bypass or a duplicate create.",
+      "observed": {
+        "audit_action": "release_hold_provider_settled",
+        "binding_source_matches_older_item": true,
+        "dispatch_operation": "PATCH",
+        "older_hold_released": true,
+        "original_intent_preserved": true,
+        "persisted_status": "delivered",
+        "simulated_crm_name": "New account v2",
+        "simulated_reason": "SIMULATED: mock handler completed; no remote operation remains in flight.",
+        "simulated_reviewer": "synthetic-demo-operator",
+        "staged_operation": "POST",
+        "synthetic_dispatch_id": "synthetic-crm-account-001"
+      },
+      "passed": true,
+      "title": "5. Audited operator recovery and bound update"
+    }
+  ],
+  "schema_version": 1,
+  "simulated_http_calls": [
+    {
+      "method": "POST",
+      "path": "/services/data/v65.0/sobjects/Account"
+    },
+    {
+      "method": "GET",
+      "path": "/services/data/v65.0/query"
+    },
+    {
+      "method": "PATCH",
+      "path": "/services/data/v65.0/sobjects/Account/synthetic-crm-account-001"
+    }
+  ],
+  "transport": "httpx.MockTransport; no network transport"
+}

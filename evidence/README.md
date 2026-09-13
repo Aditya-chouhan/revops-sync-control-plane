@@ -1,5 +1,23 @@
 # Evidence
 
+## Hiring walkthrough — 2026-09-13
+
+- `hiring_demo_2026-09-13.json`: captured `python -m revops_sync.demo --json` execution. Five checked scenarios; simulated trace POST → GET → PATCH; zero real external writes. Inputs, observations, audit details and boundaries are included.
+- `../docs/HIRING_DEMO_OUTPUT.md`: captured human-readable command output. A regression test compares both committed artifacts against a fresh demo run; results are not hand-authored.
+- `pytest_hiring_demo_2026-09-13.xml`: machine-generated JUnit receipt, 123 passed and 1 skipped. Seven additional tests cover mock-only HTTP despite conflicting environment settings, repeatable fresh databases, disclosure/input rendering, both CLI formats, failure reporting and captured-artifact equality.
+- `coverage_hiring_demo_2026-09-13.xml`: machine-generated source-line coverage, 94.37% (973/1031 lines); the 80% gate passed.
+- `ruff_hiring_demo_2026-09-13.txt` and `mypy_hiring_demo_2026-09-13.txt`: captured final static-check output.
+
+Python 3.12.14 with the same cached local dependencies described below; a fresh install was not revalidated. The walkthrough exercises actual service code using synthetic snapshots, a temporary file-backed SQLite database, fake credentials and `httpx.MockTransport`. No network transport or configured user database is used. PostgreSQL smoke remains skipped; live CRM, concurrent ingestion, signed webhooks, migrations/deployment and commercial outcomes were not newly verified. GitHub Actions status requires a separate check.
+
+```bash
+python -m revops_sync.demo
+python -m revops_sync.demo --json
+pytest --junitxml=evidence/pytest_hiring_demo_2026-09-13.xml \
+  --cov=src/revops_sync --cov-report=xml:evidence/coverage_hiring_demo_2026-09-13.xml \
+  --cov-report=term-missing --cov-fail-under=80
+```
+
 ## Ingestion ordering — 2026-09-13
 
 - `pytest_ingestion_ordering_2026-09-13.xml`: machine-generated JUnit receipt, 116 passed and 1 skipped. Twenty additional tests cover duplicate snapshots, all six serial arrival permutations of three versions, stale identity/consent protection, whole-batch conflict rollback, timezone and legacy offset normalization, timezone validation, API 409/stale receipts, and mixed-batch counts.
