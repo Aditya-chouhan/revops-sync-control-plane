@@ -49,9 +49,7 @@ class SourceRecord(Base):
 
     account: Mapped[CanonicalAccount] = relationship(back_populates="source_records")
 
-    __table_args__ = (
-        Index("uq_source_provider_external", "provider", "external_id", unique=True),
-    )
+    __table_args__ = (Index("uq_source_provider_external", "provider", "external_id", unique=True),)
 
 
 class ConflictRecord(Base):
@@ -97,6 +95,10 @@ class OutboxItem(Base):
     status: Mapped[str] = mapped_column(String(40), default="preview_only", index=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    claim_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    claim_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     account: Mapped[CanonicalAccount] = relationship(back_populates="outbox_items")

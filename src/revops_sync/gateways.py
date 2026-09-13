@@ -3,10 +3,13 @@ from __future__ import annotations
 import random
 import re
 import time
+import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
+from sqlalchemy import case, or_, update
 from sqlalchemy.orm import object_session
 
 from revops_sync.config import Settings
@@ -16,6 +19,14 @@ from revops_sync.schemas import IntegrationPreview
 
 class DeliveryOutcomeUnknown(RuntimeError):
     """A write may have landed; replay is blocked until read-back proves its state."""
+
+
+class WorkerClaimUnavailable(RuntimeError):
+    """Another worker owns this item; the caller must not make any HTTP request."""
+
+
+class WorkerClaimLost(RuntimeError):
+    """A stale worker cannot dispatch, acknowledge, or release another owner's claim."""
 
 
 def _same_value(actual: Any, expected: Any) -> bool:
@@ -72,31 +83,79 @@ class GuardedDeliveryClient:
         settings: Settings,
         client: httpx.Client | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ):
         self.settings = settings
         self.client = client or httpx.Client(timeout=settings.connector_timeout_seconds)
         self.sleep = sleep
+        self.clock = clock
 
     def deliver(self, item: OutboxItem) -> dict[str, Any]:
         provider = item.target_provider
         self._assert_enabled(provider)
         if object_session(item) is None:
             raise RuntimeError("Delivery requires a persisted outbox item in a dedicated session")
-        if item.status in {"delivered", "reconciled"}:
+        token = self._claim(item)
+        if token is None:
             return {
                 "provider": provider,
                 "outcome": "already_acknowledged",
                 "external_id": item.target_external_id,
             }
+        try:
+            return self._deliver_claimed(item, token)
+        finally:
+            self._release(item, token)
+
+    def _claim(self, item: OutboxItem) -> str | None:
+        session = object_session(item)
+        if session is None:
+            raise RuntimeError("Outbox item is detached")
+        if session.new or session.dirty or session.deleted:
+            raise RuntimeError("Delivery requires a clean dedicated session; commit staging first")
+        now = self.clock()
+        token = str(uuid.uuid4())
+        statement = (
+            update(OutboxItem)
+            .where(
+                OutboxItem.id == item.id,
+                OutboxItem.status.in_(
+                    ["preview_only", "retryable_failed", "dispatching", "outcome_unknown"]
+                ),
+                or_(OutboxItem.claim_token.is_(None), OutboxItem.claim_expires_at <= now),
+            )
+            .values(
+                # A reclaimed lease NEVER opens a write path, even if the prior
+                # worker died before its dispatch marker or during retry sleep.
+                status=case(
+                    (OutboxItem.claim_token.is_not(None), "outcome_unknown"),
+                    else_=OutboxItem.status,
+                ),
+                claim_token=token,
+                claim_expires_at=now + timedelta(seconds=self.settings.outbox_claim_seconds),
+            )
+            .returning(OutboxItem.id)
+            .execution_options(synchronize_session=False)
+        )
+        claimed = session.execute(statement).scalar_one_or_none()
+        session.commit()
+        session.refresh(item)  # discard a worker's stale pre-claim ORM snapshot
+        if claimed is not None:
+            return token
+        if item.status in {"delivered", "reconciled"}:
+            return None
+        raise WorkerClaimUnavailable(f"Outbox {item.id}: active claim or non-deliverable state")
+
+    def _deliver_claimed(self, item: OutboxItem, token: str) -> dict[str, Any]:
+        provider = item.target_provider
         if item.status in {"dispatching", "outcome_unknown"}:
-            return self._recover(item, "previous write has an unconfirmed outcome")
+            return self._recover(item, token, "previous write has an unconfirmed outcome")
         if item.status not in {"preview_only", "retryable_failed"}:
             raise RuntimeError(f"Outbox status {item.status} does not permit delivery")
         url, headers = self._request_parts(provider, item)
         last_error: Exception | None = None
         for attempt in range(self.settings.connector_max_retries + 1):
-            item.attempts += 1
-            self._store(item, "dispatching")  # durable BEFORE any provider write
+            self._store(item, token, "dispatching", increment_attempt=True)
             try:
                 response = self.client.request(
                     item.operation,
@@ -105,10 +164,12 @@ class GuardedDeliveryClient:
                     headers={**headers, "Idempotency-Key": item.idempotency_key},
                 )
                 if response.status_code >= 500:
-                    return self._recover(item, f"ambiguous HTTP {response.status_code}")
+                    return self._recover(item, token, f"ambiguous HTTP {response.status_code}")
                 if response.status_code != 429:
                     if response.is_error:
-                        self._store(item, "delivery_rejected", f"HTTP {response.status_code}")
+                        self._store(
+                            item, token, "delivery_rejected", f"HTTP {response.status_code}"
+                        )
                     response.raise_for_status()
                     if item.operation == "POST":
                         try:
@@ -116,9 +177,12 @@ class GuardedDeliveryClient:
                         except (ValueError, AttributeError):
                             external_id = None
                         if not isinstance(external_id, str) or not external_id:
-                            return self._recover(item, "successful create omitted its object ID")
-                        item.target_external_id = external_id
-                    self._store(item, "delivered")
+                            return self._recover(
+                                item, token, "successful create omitted its object ID"
+                            )
+                        self._store(item, token, "delivered", external_id=external_id)
+                    else:
+                        self._store(item, token, "delivered")
                     return {"status_code": response.status_code, "provider": provider}
                 last_error = httpx.HTTPStatusError(
                     f"retryable provider response {response.status_code}",
@@ -130,9 +194,12 @@ class GuardedDeliveryClient:
                 last_error = exc
                 retry_after = None
             except httpx.TransportError:
-                return self._recover(item, "ambiguous transport failure after dispatch")
+                return self._recover(item, token, "ambiguous transport failure after dispatch")
             self._store(
-                item, "retryable_failed", "request not accepted or connection not established"
+                item,
+                token,
+                "retryable_failed",
+                "request not accepted or connection not established",
             )
             if attempt >= self.settings.connector_max_retries:
                 break
@@ -144,15 +211,66 @@ class GuardedDeliveryClient:
             raise RuntimeError("delivery failed without an error")
         raise last_error
 
-    def _store(self, item: OutboxItem, status: str, error: str | None = None) -> None:
+    def _store(
+        self,
+        item: OutboxItem,
+        token: str,
+        status: str,
+        error: str | None = None,
+        *,
+        increment_attempt: bool = False,
+        external_id: str | None = None,
+    ) -> None:
         session = object_session(item)
         if session is None:
             raise RuntimeError("Outbox item is detached")
-        item.status, item.last_error = status, error
+        now = self.clock()
+        values: dict[str, Any] = {
+            "status": status,
+            "last_error": error,
+            "claim_expires_at": now + timedelta(seconds=self.settings.outbox_claim_seconds),
+        }
+        if increment_attempt:
+            values["attempts"] = OutboxItem.attempts + 1
+        if external_id is not None:
+            values["target_external_id"] = external_id
+        saved = session.execute(
+            update(OutboxItem)
+            .where(
+                OutboxItem.id == item.id,
+                OutboxItem.claim_token == token,
+                OutboxItem.claim_expires_at > now,
+            )
+            .values(**values)
+            .returning(OutboxItem.id)
+            .execution_options(synchronize_session=False)
+        ).scalar_one_or_none()
         session.commit()
+        if saved is None:
+            raise WorkerClaimLost(f"Outbox {item.id}: claim expired or ownership changed")
+        session.refresh(item)
 
-    def _recover(self, item: OutboxItem, reason: str) -> dict[str, Any]:
-        self._store(item, "outcome_unknown", reason)
+    def _release(self, item: OutboxItem, token: str) -> None:
+        session = object_session(item)
+        if session is None:
+            return
+        # Roll back any failed DB transaction before the fenced cleanup. Never
+        # flush a stale object's attributes over a successor's outcome.
+        session.rollback()
+        session.execute(
+            update(OutboxItem)
+            .where(
+                OutboxItem.id == item.id,
+                OutboxItem.claim_token == token,
+            )
+            .values(claim_token=None, claim_expires_at=None)
+            .execution_options(synchronize_session=False)
+        )
+        session.commit()
+        session.refresh(item)
+
+    def _recover(self, item: OutboxItem, token: str, reason: str) -> dict[str, Any]:
+        self._store(item, token, "outcome_unknown", reason)
         try:
             external_id = self._observe_desired_state(item)
         except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
@@ -162,8 +280,7 @@ class GuardedDeliveryClient:
                 f"Outbox {item.id}: outcome unknown; no further write was sent. "
                 "Inspect provider state and follow docs/RECOVERY.md."
             )
-        item.target_external_id = external_id
-        self._store(item, "reconciled")
+        self._store(item, token, "reconciled", external_id=external_id)
         return {
             "provider": item.target_provider,
             "outcome": "desired_state_observed",

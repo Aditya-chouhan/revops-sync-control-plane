@@ -36,6 +36,8 @@ Every outbox payload carries this control plane's own canonical id (`gtm_canonic
 
 The internal client persists a pre-dispatch marker, reconciles timeouts and 5xx responses with read-back, and blocks automatic write replay when a result is uncertain. An acknowledged item is not sent again. The canonical stamp and all intended fields must match; observing desired state is distinct from proving a request caused it. See [the recovery runbook](RECOVERY.md) for persisted states, operator actions, and explicit concurrency/conditional-write limitations. This change is verified with simulated provider HTTP, not a new live CRM run.
 
+Same-item delivery additionally requires a database-backed worker claim. Acquisition is a conditional UPDATE against stored state, independent of ORM cache contents. Every transition is fenced by a unique token and lease expiry; losing workers make no HTTP request, and expired claims permit only read-back. Revision `0003` must be migrated with old workers stopped. Claims do not serialize different items or enforce provider-side conditional updates.
+
 ## Secrets and writes
 
 `.env.example` contains empty placeholders only. Live delivery requires a global switch, provider switch, and provider credentials. The FastAPI router does not expose the delivery method.

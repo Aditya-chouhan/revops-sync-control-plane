@@ -1,5 +1,19 @@
 # Evidence
 
+## Worker claims — 2026-09-13
+
+- `pytest_worker_claims_2026-09-13.xml`: machine-generated JUnit receipt, 63 passed and 1 skipped. Twelve new tests cover two-worker races for both CRMs and both operations, active exclusion, expired-claim read-only takeover, token-fenced stale acknowledgements/cleanup, expired dispatch, dirty-session rejection, and SQLite migration upgrade/drift/downgrade preserving existing unknown outcomes.
+- `coverage_worker_claims_2026-09-13.xml`: machine-generated line coverage, 93.31% (725/777 lines); the 80% gate passed.
+- `ruff_worker_claims_2026-09-13.txt` and `mypy_worker_claims_2026-09-13.txt`: captured final static-check output.
+
+The races use separate SQLAlchemy sessions/connections on file-backed SQLite and two Python threads with stale snapshots. They do not use a process-local delivery mutex. This is not a PostgreSQL concurrency run or live CRM evidence. Runtime uses the same cached local development dependencies described below; tokens and HTTP responses are synthetic. The optional PostgreSQL smoke remains skipped. Original timeout receipts are preserved separately.
+
+```bash
+pytest --junitxml=evidence/pytest_worker_claims_2026-09-13.xml \
+  --cov=src/revops_sync --cov-report=xml:evidence/coverage_worker_claims_2026-09-13.xml \
+  --cov-report=term-missing --cov-fail-under=80
+```
+
 ## Timeout recovery verification — 2026-09-13
 
 - `pytest_2026-09-13.xml`: machine-generated JUnit receipt, 51 passed and 1 skipped. The skip is the optional real-PostgreSQL smoke test because `POSTGRES_SMOKE_URL` was not configured.

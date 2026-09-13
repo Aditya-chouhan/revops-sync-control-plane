@@ -40,6 +40,7 @@ flowchart LR
 - idempotent HubSpot and Salesforce outbox previews, keyed by a monotonic per-account-per-provider sequence so a value that reverts to an earlier state still stages a fresh preview instead of silently colliding with an old one
 - guarded delivery with bounded 429/pre-connection retries, `Retry-After` support, and read-back reconciliation after ambiguous transport/5xx outcomes
 - durable pre-dispatch markers and acknowledgements; sequential replay of an acknowledged or uncertain item does not issue another write
+- database-backed, expiring worker claims with token-fenced transitions; only one claim-aware worker can dispatch the same item, and expired-claim takeover is read-back only
 - FastAPI endpoints, optional API-key protection, OpenAPI, health/readiness, JSON logs, and Prometheus metrics
 - Alembic migration, Docker Compose, GitHub Actions, and an 80% coverage gate
 - a credential-ready BigQuery/dbt/Terraform path that is explicitly **not** represented as deployed
@@ -143,7 +144,9 @@ Retries are bounded, and every outbox item's idempotency key is derived from its
 
 The client persists `dispatching` before the request in the outbox item's attached SQLAlchemy session. It requires a dedicated session because it commits state transitions. Known object IDs are read directly; uncertain creates are searched by the canonical-ID custom field. A unique object with matching identity and every intended field produces `reconciled` and `desired_state_observed`—not a claim that the original request caused that state. Missing, duplicate, mismatched, or unreadable results remain `outcome_unknown`. Reopening the database and replaying an uncertain item performs only read-back; replaying an acknowledged item performs no HTTP request.
 
-See [operator recovery](docs/RECOVERY.md). The regression tests use fake tokens and in-memory HTTP transports: no live CRM operation was run for this change. Concurrent-worker exclusion and conditional writes against simultaneous seller edits are not implemented; this is not an exactly-once delivery guarantee.
+See [operator recovery](docs/RECOVERY.md). The regression tests use fake tokens and in-memory HTTP transports: no live CRM operation was run for this change. Same-item worker exclusion uses one conditional database UPDATE, not a process-local mutex. Every dispatch and acknowledgement checks a unique claim token and unexpired lease; losing workers make no HTTP request. Expired claims can be taken over only for read-back, and stale holders cannot acknowledge or clear a successor's claim. Ordering across different outbox items and conditional writes against simultaneous seller edits are not implemented; this is not an exactly-once delivery guarantee.
+
+**Upgrade before running claim-aware workers:** stop all old/unfenced delivery processes, run `alembic upgrade head` (revision `0003`), then restart with the new code. `AUTO_CREATE_SCHEMA` does not upgrade an existing table. `OUTBOX_CLAIM_SECONDS` defaults to 300; synchronize worker clocks and size the lease above expected I/O latency. Expiry does not cancel an HTTP call already in flight and never authorizes a replacement write.
 
 ## Real HubSpot evidence
 
@@ -168,6 +171,8 @@ The local suite passed 27/27 tests (26 in CI, where the optional real-Postgres s
 ## Honest boundaries
 
 Timeout recovery verification on 2026-09-13: **51 passed, 1 skipped, 93.14% line coverage** locally against SQLite. The skipped test requires `POSTGRES_SMOKE_URL`; this run does not add new PostgreSQL or live-provider evidence. Machine-generated JUnit and coverage XML are in [`evidence/`](evidence/README.md). GitHub Actions remains the authoritative CI result.
+
+Worker-claim verification later on 2026-09-13: **63 passed, 1 skipped, 93.31% line coverage**, including independent-session, two-thread races on file-backed SQLite and migration upgrade/drift/downgrade checks. The original timeout receipts are retained; the new files use `worker_claims` in their names. No new PostgreSQL concurrency or live CRM run is claimed.
 
 | Evidence | Classification | What it proves | What it does not prove |
 |---|---|---|---|

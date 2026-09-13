@@ -91,6 +91,7 @@ class OutboxRead(BaseModel):
     payload: dict[str, Any]
     status: str
     attempts: int
+    claim_expires_at: datetime | None = None
 
 
 class AccountRead(BaseModel):

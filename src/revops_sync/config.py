@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     salesforce_api_version: str = "v65.0"
     connector_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
     connector_max_retries: int = Field(default=4, ge=0, le=10)
+    outbox_claim_seconds: int = Field(default=300, ge=1, le=86400)
 
 
 @lru_cache
