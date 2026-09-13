@@ -1,5 +1,25 @@
 # Evidence
 
+## Timeout recovery verification — 2026-09-13
+
+- `pytest_2026-09-13.xml`: machine-generated JUnit receipt, 51 passed and 1 skipped. The skip is the optional real-PostgreSQL smoke test because `POSTGRES_SMOKE_URL` was not configured.
+- `coverage_2026-09-13.xml`: machine-generated line coverage, 93.14% (679/729 lines); the 80% gate passed.
+- `ruff_2026-09-13.txt` and `mypy_2026-09-13.txt`: captured command output, not handwritten summaries.
+
+Environment: Python 3.12.14, pytest 8.4.2, pytest-cov 6.3.0, SQLite, cached development dependencies with the current repository's `src` on `PYTHONPATH`. A fresh dependency installation was blocked by DNS resolution, so this receipt is a local cached-dependency verification, not proof of a fresh install. HTTP provider responses are simulated by `httpx.MockTransport`; credentials are fake. No live CRM write or new PostgreSQL run occurred. Docker/dbt/Terraform were not revalidated locally for this Python-only change. GitHub Actions is authoritative for those checks.
+
+Reproduce after installing the project's development dependencies:
+
+```bash
+ruff check .
+mypy src
+pytest --junitxml=evidence/pytest_2026-09-13.xml \
+  --cov=src/revops_sync --cov-report=xml:evidence/coverage_2026-09-13.xml \
+  --cov-report=term-missing --cov-fail-under=80
+```
+
+## Historical verification — 2026-08-27
+
 Real committed output, not hand-typed numbers. Regenerated 2026-08-27 after the
 S1–S4 fixes described in `docs/CASE_STUDY.md`.
 

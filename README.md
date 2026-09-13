@@ -38,7 +38,8 @@ flowchart LR
 - immutable conflict fingerprints, including both source values and the chosen resolution
 - transactional reconciliation in PostgreSQL or SQLite — Postgres exercised by a real, evidence-committed test run, not only by schema migration
 - idempotent HubSpot and Salesforce outbox previews, keyed by a monotonic per-account-per-provider sequence so a value that reverts to an earlier state still stages a fresh preview instead of silently colliding with an old one
-- guarded delivery client with retryable 429/5xx handling and `Retry-After` support
+- guarded delivery with bounded 429/pre-connection retries, `Retry-After` support, and read-back reconciliation after ambiguous transport/5xx outcomes
+- durable pre-dispatch markers and acknowledgements; sequential replay of an acknowledged or uncertain item does not issue another write
 - FastAPI endpoints, optional API-key protection, OpenAPI, health/readiness, JSON logs, and Prometheus metrics
 - Alembic migration, Docker Compose, GitHub Actions, and an 80% coverage gate
 - a credential-ready BigQuery/dbt/Terraform path that is explicitly **not** represented as deployed
@@ -138,7 +139,11 @@ The public API contains no delivery route. The internal delivery client fails cl
 3. the provider credential and endpoint are present;
 4. application code explicitly invokes delivery.
 
-Retries are bounded, and every outbox item's idempotency key is derived from its own monotonic per-(account, provider) sequence, so a payload that reverts to an earlier state still gets a fresh key instead of colliding with the item that already staged that state. Retries honor integer `Retry-After` values. The committed test uses an obviously fake token with an in-memory HTTP transport; it does not contact HubSpot or Salesforce.
+Retries are bounded, and every outbox item's idempotency key is derived from its own monotonic per-(account, provider) sequence. The header is retained for correlation; this repository does not assume HubSpot or Salesforce deduplicates it. Only explicit 429 responses and connection/pool failures before sending are automatically retried. Read/write timeouts, other transport failures, and 5xx responses may follow a successful write, so they trigger read-back instead of another write.
+
+The client persists `dispatching` before the request in the outbox item's attached SQLAlchemy session. It requires a dedicated session because it commits state transitions. Known object IDs are read directly; uncertain creates are searched by the canonical-ID custom field. A unique object with matching identity and every intended field produces `reconciled` and `desired_state_observed`—not a claim that the original request caused that state. Missing, duplicate, mismatched, or unreadable results remain `outcome_unknown`. Reopening the database and replaying an uncertain item performs only read-back; replaying an acknowledged item performs no HTTP request.
+
+See [operator recovery](docs/RECOVERY.md). The regression tests use fake tokens and in-memory HTTP transports: no live CRM operation was run for this change. Concurrent-worker exclusion and conditional writes against simultaneous seller edits are not implemented; this is not an exactly-once delivery guarantee.
 
 ## Real HubSpot evidence
 
@@ -162,6 +167,8 @@ The local suite passed 27/27 tests (26 in CI, where the optional real-Postgres s
 
 ## Honest boundaries
 
+Timeout recovery verification on 2026-09-13: **51 passed, 1 skipped, 93.14% line coverage** locally against SQLite. The skipped test requires `POSTGRES_SMOKE_URL`; this run does not add new PostgreSQL or live-provider evidence. Machine-generated JUnit and coverage XML are in [`evidence/`](evidence/README.md). GitHub Actions remains the authoritative CI result.
+
 | Evidence | Classification | What it proves | What it does not prove |
 |---|---|---|---|
 | CRM fixture | synthetic | deterministic identity/conflict cases | access to private CRM data |
@@ -177,6 +184,7 @@ No private credentials, customer records, delivery result, campaign result, pipe
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Conflict and integration contract](docs/INTEGRATIONS.md)
+- [Timeout recovery and operator runbook](docs/RECOVERY.md)
 - [Portfolio case study](docs/CASE_STUDY.md)
 - [BigQuery deployment path and blocker](docs/BIGQUERY_DEPLOYMENT.md)
 

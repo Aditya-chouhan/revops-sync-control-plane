@@ -55,6 +55,7 @@ addopts = "-q --strict-markers --disable-warnings"
 
 [tool.coverage.run]
 source = ["revops_sync"]
+relative_files = true
 
 [tool.coverage.report]
 fail_under = 80

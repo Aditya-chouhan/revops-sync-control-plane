@@ -1,15 +1,33 @@
 from __future__ import annotations
 
 import random
+import re
 import time
 from collections.abc import Callable
 from typing import Any
 
 import httpx
+from sqlalchemy.orm import object_session
 
 from revops_sync.config import Settings
 from revops_sync.models import CanonicalAccount, OutboxItem
 from revops_sync.schemas import IntegrationPreview
+
+
+class DeliveryOutcomeUnknown(RuntimeError):
+    """A write may have landed; replay is blocked until read-back proves its state."""
+
+
+def _same_value(actual: Any, expected: Any) -> bool:
+    # HubSpot returns typed property values as strings. Do not coerce arbitrary
+    # text, null, or missing keys into a match.
+    if isinstance(expected, bool):
+        return actual == expected if isinstance(actual, bool) else actual == str(expected).lower()
+    if isinstance(expected, int) and not isinstance(expected, bool):
+        if isinstance(actual, bool):
+            return False
+        return actual == expected if isinstance(actual, int) else actual == str(expected)
+    return bool(actual == expected)
 
 
 def _credentials_present(provider: str, settings: Settings) -> bool:
@@ -29,9 +47,8 @@ def integration_preview(
         )
         enabled = settings.live_integrations_enabled and settings.hubspot_live_enabled
     elif provider == "salesforce":
-        endpoint = (
-            f"/services/data/{settings.salesforce_api_version}/sobjects/Account/"
-            + ("{external_id}" if item.target_external_id else "")
+        endpoint = f"/services/data/{settings.salesforce_api_version}/sobjects/Account/" + (
+            "{external_id}" if item.target_external_id else ""
         )
         enabled = settings.live_integrations_enabled and settings.salesforce_live_enabled
     else:
@@ -63,9 +80,23 @@ class GuardedDeliveryClient:
     def deliver(self, item: OutboxItem) -> dict[str, Any]:
         provider = item.target_provider
         self._assert_enabled(provider)
+        if object_session(item) is None:
+            raise RuntimeError("Delivery requires a persisted outbox item in a dedicated session")
+        if item.status in {"delivered", "reconciled"}:
+            return {
+                "provider": provider,
+                "outcome": "already_acknowledged",
+                "external_id": item.target_external_id,
+            }
+        if item.status in {"dispatching", "outcome_unknown"}:
+            return self._recover(item, "previous write has an unconfirmed outcome")
+        if item.status not in {"preview_only", "retryable_failed"}:
+            raise RuntimeError(f"Outbox status {item.status} does not permit delivery")
         url, headers = self._request_parts(provider, item)
         last_error: Exception | None = None
         for attempt in range(self.settings.connector_max_retries + 1):
+            item.attempts += 1
+            self._store(item, "dispatching")  # durable BEFORE any provider write
             try:
                 response = self.client.request(
                     item.operation,
@@ -73,8 +104,21 @@ class GuardedDeliveryClient:
                     json=item.payload,
                     headers={**headers, "Idempotency-Key": item.idempotency_key},
                 )
-                if response.status_code not in {429, 500, 502, 503, 504}:
+                if response.status_code >= 500:
+                    return self._recover(item, f"ambiguous HTTP {response.status_code}")
+                if response.status_code != 429:
+                    if response.is_error:
+                        self._store(item, "delivery_rejected", f"HTTP {response.status_code}")
                     response.raise_for_status()
+                    if item.operation == "POST":
+                        try:
+                            external_id = response.json().get("id")
+                        except (ValueError, AttributeError):
+                            external_id = None
+                        if not isinstance(external_id, str) or not external_id:
+                            return self._recover(item, "successful create omitted its object ID")
+                        item.target_external_id = external_id
+                    self._store(item, "delivered")
                     return {"status_code": response.status_code, "provider": provider}
                 last_error = httpx.HTTPStatusError(
                     f"retryable provider response {response.status_code}",
@@ -82,22 +126,128 @@ class GuardedDeliveryClient:
                     response=response,
                 )
                 retry_after = response.headers.get("retry-after")
-            except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
                 last_error = exc
                 retry_after = None
+            except httpx.TransportError:
+                return self._recover(item, "ambiguous transport failure after dispatch")
+            self._store(
+                item, "retryable_failed", "request not accepted or connection not established"
+            )
             if attempt >= self.settings.connector_max_retries:
                 break
             delay = (
-                float(retry_after)
-                if retry_after and retry_after.isdigit()
-                else min(2**attempt, 16)
+                float(retry_after) if retry_after and retry_after.isdigit() else min(2**attempt, 16)
             )
             self.sleep(delay + random.uniform(0, 0.25))
         if last_error is None:
             raise RuntimeError("delivery failed without an error")
         raise last_error
 
+    def _store(self, item: OutboxItem, status: str, error: str | None = None) -> None:
+        session = object_session(item)
+        if session is None:
+            raise RuntimeError("Outbox item is detached")
+        item.status, item.last_error = status, error
+        session.commit()
+
+    def _recover(self, item: OutboxItem, reason: str) -> dict[str, Any]:
+        self._store(item, "outcome_unknown", reason)
+        try:
+            external_id = self._observe_desired_state(item)
+        except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
+            external_id = None
+        if external_id is None:
+            raise DeliveryOutcomeUnknown(
+                f"Outbox {item.id}: outcome unknown; no further write was sent. "
+                "Inspect provider state and follow docs/RECOVERY.md."
+            )
+        item.target_external_id = external_id
+        self._store(item, "reconciled")
+        return {
+            "provider": item.target_provider,
+            "outcome": "desired_state_observed",
+            "external_id": external_id,
+        }
+
+    def _observe_desired_state(self, item: OutboxItem) -> str | None:
+        """Read the exact object, or require a unique canonical-ID search match.
+
+        Matching proves desired state exists, not which request caused it. A
+        missing search result is NOT evidence that a timed-out create failed.
+        """
+        provider = item.target_provider
+        url, headers = self._request_parts(provider, item)
+        fields = item.payload["properties"] if provider == "hubspot" else item.payload
+        canonical_field = "gtm_canonical_id" if provider == "hubspot" else "GTM_Canonical_ID__c"
+        if fields.get(canonical_field) != item.canonical_account_id:
+            return None
+        if item.target_external_id:
+            response = self.client.get(
+                url,
+                headers=headers,
+                params={"properties": ",".join(fields)} if provider == "hubspot" else None,
+            )
+            response.raise_for_status()
+            record = response.json()
+        elif provider == "hubspot":
+            response = self.client.post(
+                url + "/search",
+                headers=headers,
+                json={
+                    "filterGroups": [
+                        {
+                            "filters": [
+                                {
+                                    "propertyName": canonical_field,
+                                    "operator": "EQ",
+                                    "value": item.canonical_account_id,
+                                }
+                            ]
+                        }
+                    ],
+                    "properties": list(fields),
+                    "limit": 2,
+                },
+            )  # search POST is a read, not a company create
+            response.raise_for_status()
+            body = response.json()
+            if body.get("total") != 1 or len(body.get("results", [])) != 1:
+                return None
+            record = body["results"][0]
+        else:
+            if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) for key in fields):
+                return None
+            canonical_id = item.canonical_account_id.replace("\\", "\\\\").replace("'", "\\'")
+            base = url.rsplit("/sobjects/Account", 1)[0]
+            query = (
+                f"SELECT Id,{','.join(fields)} FROM Account "
+                f"WHERE {canonical_field} = '{canonical_id}' LIMIT 2"
+            )
+            response = self.client.get(base + "/query", headers=headers, params={"q": query})
+            response.raise_for_status()
+            body = response.json()
+            if body.get("totalSize") != 1 or len(body.get("records", [])) != 1:
+                return None
+            record = body["records"][0]
+        if record.get("archived") is True:
+            return None
+        actual = record.get("properties", {}) if provider == "hubspot" else record
+        if any(
+            key not in actual or not _same_value(actual[key], value)
+            for key, value in fields.items()
+        ):
+            return None
+        external_id = record.get("id" if provider == "hubspot" else "Id")
+        if not isinstance(external_id, str) or not external_id:
+            return None
+        if item.target_external_id and external_id != item.target_external_id:
+            return None
+        return external_id
+
     def _assert_enabled(self, provider: str) -> None:
+        if provider not in {"hubspot", "salesforce"}:
+            raise ValueError(f"Unsupported provider: {provider}")
         provider_enabled = (
             self.settings.hubspot_live_enabled
             if provider == "hubspot"

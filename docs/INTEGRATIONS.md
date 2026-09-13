@@ -32,6 +32,10 @@ Every outbox payload carries this control plane's own canonical id (`gtm_canonic
 
 `marketing_opt_in` is deliberately carved out of the ownership table above. When HubSpot and Salesforce both have a value and disagree, the restrictive (opt-out) value wins outright — not the preferred source, not the newer record. Consent is the one field where the safe failure mode and the permissive failure mode are not symmetric, so it doesn't get a "preferred source" at all when the two sides actually conflict.
 
+## Ambiguous delivery recovery
+
+The internal client persists a pre-dispatch marker, reconciles timeouts and 5xx responses with read-back, and blocks automatic write replay when a result is uncertain. An acknowledged item is not sent again. The canonical stamp and all intended fields must match; observing desired state is distinct from proving a request caused it. See [the recovery runbook](RECOVERY.md) for persisted states, operator actions, and explicit concurrency/conditional-write limitations. This change is verified with simulated provider HTTP, not a new live CRM run.
+
 ## Secrets and writes
 
 `.env.example` contains empty placeholders only. Live delivery requires a global switch, provider switch, and provider credentials. The FastAPI router does not expose the delivery method.
