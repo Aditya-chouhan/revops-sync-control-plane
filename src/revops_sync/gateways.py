@@ -9,8 +9,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-from sqlalchemy import case, or_, update
+from sqlalchemy import case, or_, select, update
 from sqlalchemy.orm import object_session
+from sqlalchemy.sql.selectable import Exists
 
 from revops_sync.config import Settings
 from revops_sync.models import CanonicalAccount, OutboxItem
@@ -27,6 +28,29 @@ class WorkerClaimUnavailable(RuntimeError):
 
 class WorkerClaimLost(RuntimeError):
     """A stale worker cannot dispatch, acknowledge, or release another owner's claim."""
+
+
+class OutboxOrderingBlocked(WorkerClaimUnavailable):
+    """An older item in the same account/provider stream is not settled."""
+
+
+def _blocking_predecessor() -> Exists:
+    prior = OutboxItem.__table__.alias("prior_outbox")
+    return (
+        select(prior.c.id)
+        .where(
+            prior.c.canonical_account_id == OutboxItem.canonical_account_id,
+            prior.c.target_provider == OutboxItem.target_provider,
+            prior.c.sequence < OutboxItem.sequence,
+            or_(
+                prior.c.status.not_in(["delivered", "reconciled"]),
+                prior.c.claim_token.is_not(None),
+                prior.c.ordering_hold.is_(True),
+            ),
+        )
+        .correlate(OutboxItem.__table__)
+        .exists()
+    )
 
 
 def _same_value(actual: Any, expected: Any) -> bool:
@@ -123,6 +147,7 @@ class GuardedDeliveryClient:
                     ["preview_only", "retryable_failed", "dispatching", "outcome_unknown"]
                 ),
                 or_(OutboxItem.claim_token.is_(None), OutboxItem.claim_expires_at <= now),
+                ~_blocking_predecessor(),
             )
             .values(
                 # A reclaimed lease NEVER opens a write path, even if the prior
@@ -133,6 +158,9 @@ class GuardedDeliveryClient:
                 ),
                 claim_token=token,
                 claim_expires_at=now + timedelta(seconds=self.settings.outbox_claim_seconds),
+                ordering_hold=case(
+                    (OutboxItem.claim_token.is_not(None), True), else_=OutboxItem.ordering_hold
+                ),
             )
             .returning(OutboxItem.id)
             .execution_options(synchronize_session=False)
@@ -144,6 +172,16 @@ class GuardedDeliveryClient:
             return token
         if item.status in {"delivered", "reconciled"}:
             return None
+        blocked = session.scalar(
+            select(OutboxItem.id).where(
+                OutboxItem.id == item.id,
+                _blocking_predecessor(),
+            )
+        )
+        if blocked is not None:
+            raise OutboxOrderingBlocked(
+                f"Outbox {item.id}: an older stream item is unresolved or held"
+            )
         raise WorkerClaimUnavailable(f"Outbox {item.id}: active claim or non-deliverable state")
 
     def _deliver_claimed(self, item: OutboxItem, token: str) -> dict[str, Any]:
@@ -171,6 +209,10 @@ class GuardedDeliveryClient:
                             item, token, "delivery_rejected", f"HTTP {response.status_code}"
                         )
                     response.raise_for_status()
+                    if response.status_code not in {200, 201, 204}:
+                        return self._recover(
+                            item, token, "provider returned a non-final success status"
+                        )
                     if item.operation == "POST":
                         try:
                             external_id = response.json().get("id")
@@ -180,9 +222,11 @@ class GuardedDeliveryClient:
                             return self._recover(
                                 item, token, "successful create omitted its object ID"
                             )
-                        self._store(item, token, "delivered", external_id=external_id)
+                        self._store(
+                            item, token, "delivered", external_id=external_id, ordering_hold=False
+                        )
                     else:
-                        self._store(item, token, "delivered")
+                        self._store(item, token, "delivered", ordering_hold=False)
                     return {"status_code": response.status_code, "provider": provider}
                 last_error = httpx.HTTPStatusError(
                     f"retryable provider response {response.status_code}",
@@ -200,6 +244,7 @@ class GuardedDeliveryClient:
                 token,
                 "retryable_failed",
                 "request not accepted or connection not established",
+                ordering_hold=False,
             )
             if attempt >= self.settings.connector_max_retries:
                 break
@@ -220,6 +265,7 @@ class GuardedDeliveryClient:
         *,
         increment_attempt: bool = False,
         external_id: str | None = None,
+        ordering_hold: bool | None = None,
     ) -> None:
         session = object_session(item)
         if session is None:
@@ -232,6 +278,9 @@ class GuardedDeliveryClient:
         }
         if increment_attempt:
             values["attempts"] = OutboxItem.attempts + 1
+            values["ordering_hold"] = True
+        if ordering_hold is not None:
+            values["ordering_hold"] = ordering_hold
         if external_id is not None:
             values["target_external_id"] = external_id
         saved = session.execute(
@@ -270,7 +319,7 @@ class GuardedDeliveryClient:
         session.refresh(item)
 
     def _recover(self, item: OutboxItem, token: str, reason: str) -> dict[str, Any]:
-        self._store(item, token, "outcome_unknown", reason)
+        self._store(item, token, "outcome_unknown", reason, ordering_hold=True)
         try:
             external_id = self._observe_desired_state(item)
         except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
@@ -285,6 +334,7 @@ class GuardedDeliveryClient:
             "provider": item.target_provider,
             "outcome": "desired_state_observed",
             "external_id": external_id,
+            "ordering_hold": item.ordering_hold,
         }
 
     def _observe_desired_state(self, item: OutboxItem) -> str | None:

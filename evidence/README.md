@@ -1,5 +1,19 @@
 # Evidence
 
+## Stream ordering — 2026-09-13
+
+- `pytest_stream_ordering_2026-09-13.xml`: machine-generated JUnit receipt, 83 passed and 1 skipped. Twenty additional tests cover full-prefix blocking, independent streams, different-item races with stale snapshots, active-owner barriers, late requests after lease takeover, asynchronous acceptance, operator attestation, audit rollback, and conservative SQLite migration backfill.
+- `coverage_stream_ordering_2026-09-13.xml`: machine-generated line coverage, 93.56% (770/823 lines); the 80% gate passed.
+- `ruff_stream_ordering_2026-09-13.txt` and `mypy_stream_ordering_2026-09-13.txt`: captured final static-check output.
+
+Same cached local dependency environment as below. Concurrent tests use independent sessions/connections on file-backed SQLite and simulated HTTP, not live CRMs. The optional PostgreSQL smoke remains skipped because `POSTGRES_SMOKE_URL` is unset. No new PostgreSQL concurrency, fresh-install, or provider-settlement evidence is claimed. Earlier receipts remain unchanged. GitHub Actions results must be checked separately.
+
+```bash
+pytest --junitxml=evidence/pytest_stream_ordering_2026-09-13.xml \
+  --cov=src/revops_sync --cov-report=xml:evidence/coverage_stream_ordering_2026-09-13.xml \
+  --cov-report=term-missing --cov-fail-under=80
+```
+
 ## Worker claims — 2026-09-13
 
 - `pytest_worker_claims_2026-09-13.xml`: machine-generated JUnit receipt, 63 passed and 1 skipped. Twelve new tests cover two-worker races for both CRMs and both operations, active exclusion, expired-claim read-only takeover, token-fenced stale acknowledgements/cleanup, expired dispatch, dirty-session rejection, and SQLite migration upgrade/drift/downgrade preserving existing unknown outcomes.

@@ -92,6 +92,7 @@ class OutboxRead(BaseModel):
     status: str
     attempts: int
     claim_expires_at: datetime | None = None
+    ordering_hold: bool = False
 
 
 class AccountRead(BaseModel):

@@ -3,7 +3,18 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    false,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from revops_sync.db import Base
@@ -99,6 +110,7 @@ class OutboxItem(Base):
     claim_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    ordering_hold: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     account: Mapped[CanonicalAccount] = relationship(back_populates="outbox_items")
@@ -111,6 +123,19 @@ class OutboxItem(Base):
             "sequence",
             unique=True,
         ),
+    )
+
+
+class OrderingResolution(Base):
+    __tablename__ = "ordering_resolutions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    outbox_item_id: Mapped[str] = mapped_column(ForeignKey("outbox_items.id"), index=True)
+    reviewer: Mapped[str] = mapped_column(String(255))
+    reason: Mapped[str] = mapped_column(Text)
+    action: Mapped[str] = mapped_column(String(40))
+    resolved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 
