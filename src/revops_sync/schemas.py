@@ -92,6 +92,9 @@ class OutboxRead(BaseModel):
     status: str
     attempts: int
     claim_expires_at: datetime | None = None
+    dispatch_operation: str | None = None
+    dispatch_external_id: str | None = None
+    binding_source_id: str | None = None
     ordering_hold: bool = False
 
 

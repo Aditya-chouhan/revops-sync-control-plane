@@ -1,5 +1,19 @@
 # Evidence
 
+## Target binding — 2026-09-13
+
+- `pytest_target_binding_2026-09-13.xml`: machine-generated JUnit receipt, 96 passed and 1 skipped. Thirteen additional tests cover both providers' queued POST/PATCH chains, persisted exact-object recovery after read-back outage and restart, conflicting/missing IDs, malformed intent, reconciled-create binding after audited release, stale-owner fencing, and migration preservation.
+- `coverage_target_binding_2026-09-13.xml`: machine-generated line coverage, 93.63% (808/863 lines); the 80% gate passed.
+- `ruff_target_binding_2026-09-13.txt` and `mypy_target_binding_2026-09-13.txt`: captured final static-check output.
+
+Same cached local dependency environment described below; SQLite and simulated HTTP only. The optional PostgreSQL smoke remains skipped because `POSTGRES_SMOKE_URL` is unset. No new live CRM, PostgreSQL, or fresh-install evidence is claimed. Earlier receipts are retained. GitHub Actions results must be checked separately.
+
+```bash
+pytest --junitxml=evidence/pytest_target_binding_2026-09-13.xml \
+  --cov=src/revops_sync --cov-report=xml:evidence/coverage_target_binding_2026-09-13.xml \
+  --cov-report=term-missing --cov-fail-under=80
+```
+
 ## Stream ordering — 2026-09-13
 
 - `pytest_stream_ordering_2026-09-13.xml`: machine-generated JUnit receipt, 83 passed and 1 skipped. Twenty additional tests cover full-prefix blocking, independent streams, different-item races with stale snapshots, active-owner barriers, late requests after lease takeover, asynchronous acceptance, operator attestation, audit rollback, and conservative SQLite migration backfill.

@@ -27,7 +27,7 @@ All state changes check the token and unexpired lease in the database. Cleanup c
 Deployment:
 
 1. Stop all old/unfenced/unordered delivery processes. Mixed-version delivery is not safe.
-2. Run `alembic upgrade head` through revision `0004`. Existing outcomes remain unchanged; legacy `dispatching`, `outcome_unknown`, and `reconciled` items gain conservative ordering holds. `AUTO_CREATE_SCHEMA` does not alter existing tables.
+2. Run `alembic upgrade head` through revision `0005`. Existing outcomes remain unchanged; revision `0004` gives legacy `dispatching`, `outcome_unknown`, and `reconciled` items conservative ordering holds. Revision `0005` adds nullable dispatch identity fields without fabricating bindings. `AUTO_CREATE_SCHEMA` does not alter existing tables.
 3. Restart claim-aware workers with `OUTBOX_CLAIM_SECONDS` sized above expected request/read-back latency (default 300 seconds).
 4. Inspect `claim_expires_at` via the outbox API or database when diagnosing a busy item. Claim tokens are not exposed on the API; do not copy another worker's token to bypass ownership.
 5. Treat busy/lost claims as stop conditions. Do not reset outcomes or clear active claims manually. Downgrading requires all workers stopped first.
@@ -35,6 +35,7 @@ Deployment:
 ## Read-back policy
 
 - Existing object: GET the exact HubSpot company or Salesforce Account ID.
+- A queued create bound to an earlier acknowledged ID uses its persisted `dispatch_external_id` for exact-object read-back after restart; it never falls back to another create. See [target binding](TARGET_BINDING.md).
 - Create with no known object ID: search for `gtm_canonical_id` in HubSpot or query `GTM_Canonical_ID__c` in Salesforce. Both custom fields must exist and be readable in the authorized environment.
 - Require one result, the correct canonical stamp, the correct object ID when known, and all intended field keys and values. HubSpot string representations of booleans and integers are narrowly normalized; missing keys are not treated as null.
 - A matching result records `reconciled`, the external object ID, and returns `desired_state_observed`. It does not assert causal attribution to the timed-out request or clear an ordering hold. An older request could still apply later.

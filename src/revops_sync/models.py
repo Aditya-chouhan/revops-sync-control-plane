@@ -94,6 +94,10 @@ class OutboxItem(Base):
     target_provider: Mapped[str] = mapped_column(String(24), index=True)
     target_external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     operation: Mapped[str] = mapped_column(String(24))
+    # Preserve staged intent/checksums; persist the actual dispatch separately.
+    dispatch_operation: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    dispatch_external_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    binding_source_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Monotonic per (account, provider) — the identity half of idempotency.
     # `payload_checksum` is a dedup hint compared only against the immediately
     # preceding item for this pair, so a value that reverts to something staged

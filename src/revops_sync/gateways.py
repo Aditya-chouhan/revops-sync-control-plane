@@ -34,6 +34,10 @@ class OutboxOrderingBlocked(WorkerClaimUnavailable):
     """An older item in the same account/provider stream is not settled."""
 
 
+class TargetBindingConflict(RuntimeError):
+    """Dispatch identity is missing, inconsistent, or ambiguous; no write allowed."""
+
+
 def _blocking_predecessor() -> Exists:
     prior = OutboxItem.__table__.alias("prior_outbox")
     return (
@@ -74,16 +78,15 @@ def _credentials_present(provider: str, settings: Settings) -> bool:
 def integration_preview(
     provider: str, account: CanonicalAccount, item: OutboxItem, settings: Settings
 ) -> IntegrationPreview:
+    target_id = item.dispatch_external_id or item.target_external_id
     if provider == "hubspot":
         endpoint = (
-            "/crm/v3/objects/companies/{external_id}"
-            if item.target_external_id
-            else "/crm/v3/objects/companies"
+            "/crm/v3/objects/companies/{external_id}" if target_id else "/crm/v3/objects/companies"
         )
         enabled = settings.live_integrations_enabled and settings.hubspot_live_enabled
     elif provider == "salesforce":
         endpoint = f"/services/data/{settings.salesforce_api_version}/sobjects/Account/" + (
-            "{external_id}" if item.target_external_id else ""
+            "{external_id}" if target_id else ""
         )
         enabled = settings.live_integrations_enabled and settings.salesforce_live_enabled
     else:
@@ -91,8 +94,8 @@ def integration_preview(
     return IntegrationPreview(
         provider=provider,
         account_id=account.id,
-        external_id=item.target_external_id,
-        method=item.operation,
+        external_id=target_id,
+        method=item.dispatch_operation or item.operation,
         endpoint_template=endpoint,
         payload=item.payload,
         credential_present=_credentials_present(provider, settings),
@@ -190,13 +193,14 @@ class GuardedDeliveryClient:
             return self._recover(item, token, "previous write has an unconfirmed outcome")
         if item.status not in {"preview_only", "retryable_failed"}:
             raise RuntimeError(f"Outbox status {item.status} does not permit delivery")
+        self._bind_target(item, token)
         url, headers = self._request_parts(provider, item)
         last_error: Exception | None = None
         for attempt in range(self.settings.connector_max_retries + 1):
             self._store(item, token, "dispatching", increment_attempt=True)
             try:
                 response = self.client.request(
-                    item.operation,
+                    item.dispatch_operation or item.operation,
                     url,
                     json=item.payload,
                     headers={**headers, "Idempotency-Key": item.idempotency_key},
@@ -213,7 +217,7 @@ class GuardedDeliveryClient:
                         return self._recover(
                             item, token, "provider returned a non-final success status"
                         )
-                    if item.operation == "POST":
+                    if (item.dispatch_operation or item.operation) == "POST":
                         try:
                             external_id = response.json().get("id")
                         except (ValueError, AttributeError):
@@ -226,7 +230,13 @@ class GuardedDeliveryClient:
                             item, token, "delivered", external_id=external_id, ordering_hold=False
                         )
                     else:
-                        self._store(item, token, "delivered", ordering_hold=False)
+                        self._store(
+                            item,
+                            token,
+                            "delivered",
+                            external_id=item.dispatch_external_id,
+                            ordering_hold=False,
+                        )
                     return {"status_code": response.status_code, "provider": provider}
                 last_error = httpx.HTTPStatusError(
                     f"retryable provider response {response.status_code}",
@@ -256,6 +266,61 @@ class GuardedDeliveryClient:
             raise RuntimeError("delivery failed without an error")
         raise last_error
 
+    def _bind_target(self, item: OutboxItem, token: str) -> None:
+        session = object_session(item)
+        if session is None:
+            raise RuntimeError("Outbox item is detached")
+        fields = (
+            item.payload.get("properties", {})
+            if item.target_provider == "hubspot"
+            else item.payload
+        )
+        stamp = "gtm_canonical_id" if item.target_provider == "hubspot" else "GTM_Canonical_ID__c"
+        if fields.get(stamp) != item.canonical_account_id:
+            raise TargetBindingConflict("Payload canonical identity does not match stream")
+        prior = list(
+            session.scalars(
+                select(OutboxItem)
+                .where(
+                    OutboxItem.canonical_account_id == item.canonical_account_id,
+                    OutboxItem.target_provider == item.target_provider,
+                    OutboxItem.sequence < item.sequence,
+                    OutboxItem.status.in_(["delivered", "reconciled"]),
+                )
+                .order_by(OutboxItem.sequence.desc())
+            )
+        )
+        identities = {row.target_external_id for row in prior}
+        if None in identities or len(identities) > 1:
+            raise TargetBindingConflict(
+                "Acknowledged stream history has missing or conflicting IDs"
+            )
+        known_id = next(iter(identities), None)
+        method = item.dispatch_operation or item.operation
+        external_id = item.dispatch_external_id or item.target_external_id
+        source_id = item.binding_source_id
+        if known_id:
+            if external_id and external_id != known_id:
+                raise TargetBindingConflict(
+                    "Staged or persisted target conflicts with acknowledged ID"
+                )
+            if item.dispatch_operation is not None and method != "PATCH":
+                raise TargetBindingConflict("Persisted dispatch cannot be rebound after planning")
+            method, external_id = "PATCH", known_id
+            source_id = source_id or prior[0].id
+        if (
+            method not in {"POST", "PATCH"}
+            or (method == "PATCH" and not external_id)
+            or (method == "POST" and external_id)
+        ):
+            raise TargetBindingConflict("Invalid method/target combination")
+        self._store(
+            item,
+            token,
+            item.status,
+            dispatch_binding=(method, external_id, source_id),
+        )
+
     def _store(
         self,
         item: OutboxItem,
@@ -266,6 +331,7 @@ class GuardedDeliveryClient:
         increment_attempt: bool = False,
         external_id: str | None = None,
         ordering_hold: bool | None = None,
+        dispatch_binding: tuple[str, str | None, str | None] | None = None,
     ) -> None:
         session = object_session(item)
         if session is None:
@@ -283,6 +349,11 @@ class GuardedDeliveryClient:
             values["ordering_hold"] = ordering_hold
         if external_id is not None:
             values["target_external_id"] = external_id
+        if dispatch_binding is not None:
+            method, target, source = dispatch_binding
+            values.update(
+                dispatch_operation=method, dispatch_external_id=target, binding_source_id=source
+            )
         saved = session.execute(
             update(OutboxItem)
             .where(
@@ -349,7 +420,8 @@ class GuardedDeliveryClient:
         canonical_field = "gtm_canonical_id" if provider == "hubspot" else "GTM_Canonical_ID__c"
         if fields.get(canonical_field) != item.canonical_account_id:
             return None
-        if item.target_external_id:
+        target_id = item.dispatch_external_id or item.target_external_id
+        if target_id:
             response = self.client.get(
                 url,
                 headers=headers,
@@ -408,7 +480,7 @@ class GuardedDeliveryClient:
         external_id = record.get("id" if provider == "hubspot" else "Id")
         if not isinstance(external_id, str) or not external_id:
             return None
-        if item.target_external_id and external_id != item.target_external_id:
+        if target_id and external_id != target_id:
             return None
         return external_id
 
@@ -426,7 +498,8 @@ class GuardedDeliveryClient:
             raise RuntimeError(f"Missing {provider} credentials")
 
     def _request_parts(self, provider: str, item: OutboxItem) -> tuple[str, dict[str, str]]:
-        suffix = f"/{item.target_external_id}" if item.target_external_id else ""
+        target_id = item.dispatch_external_id or item.target_external_id
+        suffix = f"/{target_id}" if target_id else ""
         if provider == "hubspot":
             token = self.settings.hubspot_access_token
             if token is None:

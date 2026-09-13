@@ -42,6 +42,8 @@ The regression suite simulates accepted writes with lost responses, reopens the 
 
 ## What I would add with an authorized environment
 
+I also added dispatch target binding: queued creates become effective updates to the one CRM ID acknowledged earlier in the same stream. Original staged intent and checksums remain unchanged; the actual method, target ID, and source item persist under the worker fence. Conflicting/missing IDs fail closed. Tests simulate both providers and exact-object recovery after restart; this is software evidence, not live CRM validation. See [target binding](TARGET_BINDING.md).
+
 1. ~~deploy the documented custom properties/fields in sandbox portals~~ — **done for HubSpot, 2026-08-27**: `scripts/hubspot_live_sync.py` created all three `gtm_*` properties and synced the fixture accounts against a real free dev/test portal, with committed real object IDs and a proven-by-rerun idempotency check (`evidence/hubspot_live_sync_2026-08-27.json`). It also surfaced a real gap the fixture never would have: HubSpot's `industry` property is a closed enumeration, not free text — see `docs/INTEGRATIONS.md`. Salesforce fields are deployed and verified separately in `salesforce-gtm-org`; still open here is doing the equivalent live sync against that Salesforce org instead of only generating previews for it;
 2. validate provider-native webhook signatures;
 3. add queue-backed outbox workers and dead-letter replay;
