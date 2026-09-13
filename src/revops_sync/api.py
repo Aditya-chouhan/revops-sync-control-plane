@@ -11,7 +11,7 @@ from revops_sync.config import Settings
 from revops_sync.gateways import integration_preview
 from revops_sync.models import CanonicalAccount, OutboxItem
 from revops_sync.observability import RECONCILIATIONS, metrics_response
-from revops_sync.reconcile import ReconciliationService
+from revops_sync.reconcile import ReconciliationService, SourceVersionConflict
 from revops_sync.schemas import (
     AccountDetail,
     AccountRead,
@@ -63,6 +63,8 @@ def build_router(settings: Settings, factory: sessionmaker[Session]) -> APIRoute
     ) -> ReconcileResult:
         try:
             result = ReconciliationService(session, settings).run(request)
+        except SourceVersionConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (OSError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         RECONCILIATIONS.labels(request.source_mode).inc()

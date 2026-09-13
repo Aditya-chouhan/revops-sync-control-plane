@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Provider = Literal["hubspot", "salesforce"]
 
@@ -19,6 +19,13 @@ class SourceAccount(BaseModel):
     lifecycle_stage: str | None = None
     marketing_opt_in: bool | None = None
     source_updated_at: datetime
+
+    @field_validator("source_updated_at")
+    @classmethod
+    def normalize_source_version(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("source_updated_at requires an explicit timezone")
+        return value.astimezone(UTC)
     canonical_id_hint: str | None = Field(
         default=None,
         description=(
@@ -50,6 +57,7 @@ class ReconcileResult(BaseModel):
     inserted_records: int
     updated_records: int
     unchanged_records: int
+    stale_records: int = 0
     accounts_reconciled: int
     conflicts_recorded: int
     outbox_previews_created: int

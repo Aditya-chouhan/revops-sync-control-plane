@@ -40,6 +40,8 @@ Delivery additionally requires a database-backed worker claim. Acquisition is a 
 
 ## Secrets and writes
 
+Inline reconciliation accepts complete normalized snapshots, not raw webhook deltas. [Version checks](INGESTION_ORDERING.md) ignore older snapshots, recognize equivalent duplicates, and reject equal-version conflicts with atomic rollback/HTTP 409. `source_updated_at` requires a timezone. No provider webhook receiver/signature validation was added; multi-process ingestion must be externally serialized until database coordination is implemented.
+
 `.env.example` contains empty placeholders only. Live delivery requires a global switch, provider switch, and provider credentials. The FastAPI router does not expose the delivery method.
 
 This is a safe public integration boundary. `scripts/hubspot_live_sync.py`'s committed evidence proves access to a free HubSpot developer test portal, deliberately not production — it is not proof of access to any production HubSpot or Salesforce org.

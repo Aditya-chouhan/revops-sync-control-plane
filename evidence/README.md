@@ -1,5 +1,19 @@
 # Evidence
 
+## Ingestion ordering — 2026-09-13
+
+- `pytest_ingestion_ordering_2026-09-13.xml`: machine-generated JUnit receipt, 116 passed and 1 skipped. Twenty additional tests cover duplicate snapshots, all six serial arrival permutations of three versions, stale identity/consent protection, whole-batch conflict rollback, timezone and legacy offset normalization, timezone validation, API 409/stale receipts, and mixed-batch counts.
+- `coverage_ingestion_ordering_2026-09-13.xml`: machine-generated line coverage, 93.85% (840/895 lines); the 80% gate passed.
+- `ruff_ingestion_ordering_2026-09-13.txt` and `mypy_ingestion_ordering_2026-09-13.txt`: captured final static-check output.
+
+Same cached local dependency environment described below; SQLite and synthetic complete source snapshots. The optional PostgreSQL smoke remains skipped. This does not prove fresh installation, live CRM webhook signatures, concurrent ingestion exclusion, or PostgreSQL concurrency. No live/provider credentials or database deployment were used. Earlier receipts remain unchanged. GitHub Actions results require a separate check.
+
+```bash
+pytest --junitxml=evidence/pytest_ingestion_ordering_2026-09-13.xml \
+  --cov=src/revops_sync --cov-report=xml:evidence/coverage_ingestion_ordering_2026-09-13.xml \
+  --cov-report=term-missing --cov-fail-under=80
+```
+
 ## Target binding — 2026-09-13
 
 - `pytest_target_binding_2026-09-13.xml`: machine-generated JUnit receipt, 96 passed and 1 skipped. Thirteen additional tests cover both providers' queued POST/PATCH chains, persisted exact-object recovery after read-back outage and restart, conflicting/missing IDs, malformed intent, reconciled-create binding after audited release, stale-owner fencing, and migration preservation.

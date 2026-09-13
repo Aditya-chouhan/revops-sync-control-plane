@@ -41,6 +41,7 @@ flowchart LR
 - guarded delivery with bounded 429/pre-connection retries, `Retry-After` support, and read-back reconciliation after ambiguous transport/5xx outcomes
 - durable pre-dispatch markers and acknowledgements; sequential replay of an acknowledged or uncertain item does not issue another write
 - database-backed, expiring worker claims with token-fenced transitions; only one claim-aware worker can dispatch the same item, and expired-claim takeover is read-back only
+- serial normalized-snapshot version checks: stale inputs are ignored before identity resolution, duplicates are unchanged, and equal-version conflicts roll back the batch with HTTP 409; [limits and reproduction](docs/INGESTION_ORDERING.md)
 - FastAPI endpoints, optional API-key protection, OpenAPI, health/readiness, JSON logs, and Prometheus metrics
 - Alembic migration, Docker Compose, GitHub Actions, and an 80% coverage gate
 - a credential-ready BigQuery/dbt/Terraform path that is explicitly **not** represented as deployed
@@ -179,6 +180,8 @@ Worker-claim verification later on 2026-09-13: **63 passed, 1 skipped, 93.31% li
 Stream-ordering verification subsequently on 2026-09-13: **83 passed, 1 skipped, 93.56% line coverage**. Twenty additional tests cover different-item races, full-prefix blocking, independent streams, late requests after lease takeover, asynchronous acceptance, audited hold release and rollback, and conservative migration backfill. Receipts use `stream_ordering` in their names. This is SQLite and simulated HTTP evidence, not a new live-provider or PostgreSQL run.
 
 Target-binding verification subsequently on 2026-09-13: **96 passed, 1 skipped, 93.63% line coverage**. Thirteen additional tests cover both providers' queued create/update chains, exact-object recovery after restart, conflicting/missing identities, reconciled-create binding after audited settlement release, stale-owner fencing, and migration preservation. Receipts use `target_binding` in their names. No live CRM or new PostgreSQL execution is claimed.
+
+Ingestion-ordering verification subsequently on 2026-09-13: **116 passed, 1 skipped, 93.85% line coverage**. Twenty additional tests cover duplicate snapshots, all six serial arrival orders of three versions, stale identity/consent protection, atomic conflict rollback, timezone normalization, and API receipts. Files use `ingestion_ordering` in their names. This is serial normalized ingestion—not signed provider-webhook support or concurrent-ingestion exclusion. No new migration or live CRM/PostgreSQL execution was needed. Serialize ingestion across processes before using this path in an operational deployment; the API does not enforce that coordination.
 
 | Evidence | Classification | What it proves | What it does not prove |
 |---|---|---|---|

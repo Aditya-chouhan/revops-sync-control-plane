@@ -32,6 +32,15 @@ FIELD_POLICIES: dict[str, tuple[str, str]] = {
 }
 
 
+class SourceVersionConflict(ValueError):
+    """Same source version has different snapshots; reject rather than guess."""
+
+
+def _stored_utc(value: datetime) -> datetime:
+    # SQLite drops timezone metadata for stored UTC timestamps.
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
@@ -60,16 +69,12 @@ def _present(value: Any) -> bool:
     return value is not None and value != ""
 
 
-def _choose_value(
-    field_name: str, records: dict[str, SourceRecord]
-) -> tuple[Any, str, str]:
+def _choose_value(field_name: str, records: dict[str, SourceRecord]) -> tuple[Any, str, str]:
     preferred_source, policy = FIELD_POLICIES[field_name]
     preferred = records.get(preferred_source)
     if preferred and _present(preferred.payload.get(field_name)):
         return preferred.payload[field_name], preferred_source, policy
-    candidates = [
-        record for record in records.values() if _present(record.payload.get(field_name))
-    ]
+    candidates = [record for record in records.values() if _present(record.payload.get(field_name))]
     if not candidates:
         return None, "none", policy
     newest = max(candidates, key=lambda item: item.source_updated_at)
@@ -131,19 +136,51 @@ class ReconciliationService:
         self.settings = settings
 
     def run(self, request: ReconcileRequest) -> ReconcileResult:
+        if self.session.new or self.session.dirty or self.session.deleted:
+            raise RuntimeError("Reconciliation requires a clean dedicated session")
+        try:
+            return self._run(request)
+        except Exception:
+            self.session.rollback()
+            raise
+
+    def _run(self, request: ReconcileRequest) -> ReconcileResult:
         records = (
             load_fixture(self.settings.fixture_path)
             if request.source_mode == "fixture"
             else request.records
         )
-        inserted = updated = unchanged = 0
+        inserted = updated = unchanged = stale = 0
         touched_ids: set[str] = set()
 
         for record in records:
+            payload = record.model_dump(mode="json")
+            checksum = _checksum(payload)
+            row_id = source_record_id(record)
+            existing = self.session.get(SourceRecord, row_id)
+            if existing is not None:
+                stored_version = _stored_utc(existing.source_updated_at)
+                if record.source_updated_at < stored_version:
+                    # Check before identity resolution: stale domains/hints
+                    # must not create phantom accounts or move source links.
+                    stale += 1
+                    continue
+                if record.source_updated_at == stored_version:
+                    stored_payload = SourceAccount.model_validate(existing.payload).model_dump(
+                        mode="json"
+                    )
+                    if _checksum(stored_payload) != checksum:
+                        raise SourceVersionConflict(
+                            "Conflicting snapshots for one provider/external ID/source_updated_at"
+                        )
+                    unchanged += 1
+                    touched_ids.add(existing.canonical_account_id)
+                    continue
             account_id, basis, domain = canonical_identity(
                 record,
-                account_exists=lambda candidate: self.session.get(CanonicalAccount, candidate)
-                is not None,
+                account_exists=lambda candidate: (
+                    self.session.get(CanonicalAccount, candidate) is not None
+                ),
             )
             touched_ids.add(account_id)
             account = self.session.get(CanonicalAccount, account_id)
@@ -162,10 +199,6 @@ class ReconciliationService:
                 self.session.add(account)
                 self.session.flush()
 
-            payload = record.model_dump(mode="json")
-            checksum = _checksum(payload)
-            row_id = source_record_id(record)
-            existing = self.session.get(SourceRecord, row_id)
             if existing is None:
                 self.session.add(
                     SourceRecord(
@@ -207,6 +240,7 @@ class ReconciliationService:
             inserted_records=inserted,
             updated_records=updated,
             unchanged_records=unchanged,
+            stale_records=stale,
             accounts_reconciled=len(touched_ids),
             conflicts_recorded=conflicts_created,
             outbox_previews_created=outbox_created,
@@ -323,9 +357,7 @@ class ReconciliationService:
 
             next_sequence = latest_item.sequence + 1 if latest_item is not None else 1
             item_id = f"{account.id}:{provider}:{next_sequence}"
-            idempotency_key = _checksum(
-                [provider, account.id, operation, payload, next_sequence]
-            )
+            idempotency_key = _checksum([provider, account.id, operation, payload, next_sequence])
             self.session.add(
                 OutboxItem(
                     id=item_id,
