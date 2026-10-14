@@ -14,7 +14,7 @@ Watch ownership/consent resolution, duplicate and stale input handling, lost-res
 python -m revops_sync.demo
 ```
 
-Run after installing the project dependencies below. No Docker or CRM setup is needed. [Walkthrough and expected outcomes](docs/HIRING_DEMO.md) · [Captured execution output](docs/HIRING_DEMO_OUTPUT.md) · [Machine-readable receipt](evidence/hiring_demo_2026-09-13.json). The command checks outcomes and exits nonzero on failure; `--json` emits its receipt.
+Run after installing the project dependencies below. No Docker or CRM setup is needed. [Founder-facing five-minute talk track](docs/FOUNDER_WALKTHROUGH.md) · [Technical walkthrough and expected outcomes](docs/HIRING_DEMO.md) · [Captured execution output](docs/HIRING_DEMO_OUTPUT.md) · [Machine-readable receipt](evidence/hiring_demo_2026-09-13.json). The command checks outcomes and exits nonzero on failure; `--json` emits its receipt.
 
 ## Why this project exists
 
